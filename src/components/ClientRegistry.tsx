@@ -49,13 +49,16 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
         })
       });
 
-      if (!res.ok) throw new Error('Add failed');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Add failed');
+      }
 
       toast.success('Client added');
       setFormData({ name: '', company: '', city: '', mobile: '' });
       onRefresh?.();
-    } catch (err) {
-      toast.error('Failed to add client');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to add client');
     } finally {
       setIsAdding(false);
     }
@@ -75,13 +78,16 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
         })
       });
 
-      if (!res.ok) throw new Error('Update failed');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Update failed');
+      }
 
       toast.success('Client updated successfully');
       setEditingId(null);
       onRefresh?.();
-    } catch (err) {
-      toast.error('Failed to update client');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update client');
     }
   };
 

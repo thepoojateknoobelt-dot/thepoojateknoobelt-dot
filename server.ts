@@ -505,7 +505,7 @@ async function initializeDatabase() {
 initializeDatabase();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = parseInt(process.env.PORT || '3000', 10);
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key';
 
 app.use(express.json());
@@ -2066,6 +2066,15 @@ app.post('/api/clients', authenticate, async (req, res) => {
   try {
     const id = Date.now().toString();
     const { name, company, city, profitMargins, mobile = '', address = '', gstin = '' } = req.body;
+
+    const trimmedMobile = mobile ? mobile.trim() : '';
+    if (trimmedMobile) {
+      const existRes = await pool.query('SELECT id FROM clients WHERE mobile = $1', [trimmedMobile]);
+      if (existRes.rowCount > 0) {
+        return res.status(400).json({ error: 'Mobile number already registered for another client' });
+      }
+    }
+
     await pool.query(
       'INSERT INTO clients (id, name, company, city, profit_margins, mobile, address, gstin) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
       [id, name, company, city, JSON.stringify(profitMargins), mobile, address, gstin]
@@ -2080,6 +2089,14 @@ app.post('/api/clients', authenticate, async (req, res) => {
 app.put('/api/clients/:id', authenticate, async (req, res) => {
   try {
     const { name, company, city, mobile, profitMargins } = req.body;
+
+    const trimmedMobile = mobile ? mobile.trim() : '';
+    if (trimmedMobile) {
+      const existRes = await pool.query('SELECT id FROM clients WHERE mobile = $1 AND id <> $2', [trimmedMobile, req.params.id]);
+      if (existRes.rowCount > 0) {
+        return res.status(400).json({ error: 'Mobile number already registered for another client' });
+      }
+    }
     
     const result = await pool.query(
       'UPDATE clients SET name = $1, company = $2, city = $3, mobile = $4, profit_margins = $5 WHERE id = $6 RETURNING *',
