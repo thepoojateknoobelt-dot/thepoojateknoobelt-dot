@@ -85,6 +85,7 @@ export interface Client {
   company: string;
   city: string;
   profitMargins: Record<string, ProfitRange[]>; // beltType -> ranges
+  mobile?: string;
 }
 
 export interface QuotationItem {

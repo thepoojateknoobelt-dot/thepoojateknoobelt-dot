@@ -74,7 +74,7 @@ export const PresenceProPortal: React.FC<PresenceProPortalProps> = ({ url, onClo
           src={url}
           title="PresencePro HRMS"
           className="w-full h-full border-0 bg-white"
-          sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+          sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-downloads"
         />
       </div>
     </div>

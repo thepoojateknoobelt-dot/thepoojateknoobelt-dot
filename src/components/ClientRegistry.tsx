@@ -20,9 +20,13 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
   const { user } = useAuth();
   const [search, setSearch] = useState('');
   const [isAdding, setIsAdding] = useState(false);
-  const [formData, setFormData] = useState({ name: '', company: '', city: '' });
+  const [formData, setFormData] = useState({ name: '', company: '', city: '', mobile: '' });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editMargins, setEditMargins] = useState<Record<string, ProfitRange[]>>({});
+  const [editName, setEditName] = useState('');
+  const [editCompany, setEditCompany] = useState('');
+  const [editCity, setEditCity] = useState('');
+  const [editMobile, setEditMobile] = useState('');
 
   const handleAddClient = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,6 +41,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
           name: formData.name,
           company: formData.company,
           city: formData.city,
+          mobile: formData.mobile,
           profitMargins: (Array.isArray(config?.beltTypes) ? config.beltTypes : []).reduce((acc, type) => ({
             ...acc,
             [type.name]: defaultRanges
@@ -47,7 +52,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
       if (!res.ok) throw new Error('Add failed');
 
       toast.success('Client added');
-      setFormData({ name: '', company: '', city: '' });
+      setFormData({ name: '', company: '', city: '', mobile: '' });
       onRefresh?.();
     } catch (err) {
       toast.error('Failed to add client');
@@ -56,23 +61,27 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
     }
   };
 
-  const handleUpdateMargins = async (clientId: string) => {
+  const handleUpdateClient = async (clientId: string) => {
     try {
       const res = await fetch(`/api/clients/${clientId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          name: editName,
+          company: editCompany,
+          city: editCity,
+          mobile: editMobile,
           profitMargins: editMargins
         })
       });
 
       if (!res.ok) throw new Error('Update failed');
 
-      toast.success('Margins updated');
+      toast.success('Client updated successfully');
       setEditingId(null);
       onRefresh?.();
     } catch (err) {
-      toast.error('Failed to update margins');
+      toast.error('Failed to update client');
     }
   };
 
@@ -134,7 +143,8 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
   const filteredClients = clients.filter(c => 
     c.name.toLowerCase().includes(search.toLowerCase()) || 
     c.company.toLowerCase().includes(search.toLowerCase()) ||
-    c.city.toLowerCase().includes(search.toLowerCase())
+    c.city.toLowerCase().includes(search.toLowerCase()) ||
+    (c.mobile || '').toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -175,15 +185,19 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
           <form onSubmit={handleAddClient}>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label>Client Name</Label>
+                <Label>Client Name <span className="text-rose-500">*</span></Label>
                 <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required />
               </div>
               <div className="space-y-2">
-                <Label>Company Name</Label>
+                <Label>Company Name <span className="text-rose-500">*</span></Label>
                 <Input value={formData.company} onChange={(e) => setFormData({ ...formData, company: e.target.value })} required />
               </div>
               <div className="space-y-2">
-                <Label>City</Label>
+                <Label>Mobile Number</Label>
+                <Input value={formData.mobile} onChange={(e) => setFormData({ ...formData, mobile: e.target.value })} placeholder="e.g. 9876543210" />
+              </div>
+              <div className="space-y-2">
+                <Label>City <span className="text-rose-500">*</span></Label>
                 <Input value={formData.city} onChange={(e) => setFormData({ ...formData, city: e.target.value })} required />
               </div>
               <p className="text-xs text-zinc-500 italic">Default profit ranges will be set to 20%. You can customize them after adding.</p>
@@ -217,6 +231,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                   <TableHead>Client Name</TableHead>
                   <TableHead>Company</TableHead>
                   <TableHead>City</TableHead>
+                  <TableHead>Mobile Number</TableHead>
                   <TableHead>Profit Margins</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -224,9 +239,34 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
               <TableBody>
                 {filteredClients.map((c) => (
                   <TableRow key={c.id}>
-                    <TableCell className="font-medium">{c.name}</TableCell>
-                    <TableCell>{c.company}</TableCell>
-                    <TableCell>{c.city}</TableCell>
+                    <TableCell className="font-medium">
+                      {editingId === c.id ? (
+                        <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="h-8 text-xs" />
+                      ) : (
+                        c.name
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {editingId === c.id ? (
+                        <Input value={editCompany} onChange={(e) => setEditCompany(e.target.value)} className="h-8 text-xs" />
+                      ) : (
+                        c.company
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {editingId === c.id ? (
+                        <Input value={editCity} onChange={(e) => setEditCity(e.target.value)} className="h-8 text-xs" />
+                      ) : (
+                        c.city
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {editingId === c.id ? (
+                        <Input value={editMobile} onChange={(e) => setEditMobile(e.target.value)} className="h-8 text-xs font-mono" />
+                      ) : (
+                        c.mobile || '-'
+                      )}
+                    </TableCell>
                     <TableCell>
                       {editingId === c.id ? (
                         <div className="space-y-4 max-w-2xl bg-zinc-50 p-4 rounded-xl border border-zinc-200">
@@ -310,8 +350,8 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                           ))}
                           <div className="flex justify-end gap-2 pt-2 border-t">
                             <Button size="sm" variant="ghost" className="h-8 text-zinc-500" onClick={() => setEditingId(null)}>Cancel</Button>
-                            <Button size="sm" className="h-8 gap-1" onClick={() => handleUpdateMargins(c.id)}>
-                              <Save className="h-4 w-4" /> Save All Margins
+                            <Button size="sm" className="h-8 gap-1" onClick={() => handleUpdateClient(c.id)}>
+                              <Save className="h-4 w-4" /> Save Changes
                             </Button>
                           </div>
                         </div>
@@ -336,9 +376,13 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                             onClick={() => {
                               setEditingId(c.id);
                               setEditMargins(c.profitMargins || {});
+                              setEditName(c.name || '');
+                              setEditCompany(c.company || '');
+                              setEditCity(c.city || '');
+                              setEditMobile(c.mobile || '');
                             }}
                            >
-                            <Edit2 className="h-3 w-3" /> Edit Ranges
+                            <Edit2 className="h-3 w-3" /> Edit Details
                            </Button>
                         </div>
                       )}

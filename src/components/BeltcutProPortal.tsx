@@ -74,7 +74,7 @@ export const BeltcutProPortal: React.FC<BeltcutProPortalProps> = ({ url, onClose
           src={url}
           title="Beltcut Pro Optimizer"
           className="w-full h-full border-0 bg-white"
-          sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+          sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-downloads"
         />
       </div>
     </div>

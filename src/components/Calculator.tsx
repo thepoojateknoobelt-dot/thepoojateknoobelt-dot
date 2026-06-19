@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Config, Client, Quotation, ProfitRange, QuotationItem } from '../types';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card';
@@ -10,7 +10,7 @@ import { Button } from './ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { toast } from 'sonner';
 import { cn, formatCurrency } from '../lib/utils';
-import { Calculator as CalcIcon, Save, Send, AlertCircle, ChevronDown, ChevronUp, Plus, Trash2, ShoppingCart, Pencil, Check, X } from 'lucide-react';
+import { Calculator as CalcIcon, Save, Send, AlertCircle, ChevronDown, ChevronUp, Plus, Trash2, ShoppingCart, Pencil, Check, X, Search } from 'lucide-react';
 import { calculateCosting, toMeters } from '../lib/calculations';
 
 interface CalculatorProps {
@@ -28,6 +28,25 @@ const formatOrderDate = (dateVal: any, showYear = true) => {
 
 export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
   const { user } = useAuth();
+  const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
+  const [clientSearchQuery, setClientSearchQuery] = useState('');
+  const clientDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (clientDropdownRef.current && !clientDropdownRef.current.contains(event.target as Node)) {
+        setIsClientDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredClients = (Array.isArray(clients) ? clients : []).filter(c =>
+    (c.name || '').toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
+    (c.mobile || '').toLowerCase().includes(clientSearchQuery.toLowerCase())
+  );
+
   const [formData, setFormData] = useState({
     clientId: '',
     beltType: '', // This will be the Type Name
@@ -451,18 +470,76 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                 <div className="grid gap-2.5">
                   <div className="space-y-1">
                     <Label className="text-xs font-medium">Client</Label>
-                    <Select value={formData.clientId} onValueChange={(val) => { setFormData({ ...formData, clientId: val }); setQuotationItems([]); }}>
-                      <SelectTrigger className="bg-white border-zinc-400 focus:ring-zinc-900 transition-all h-9 text-xs">
-                        <SelectValue placeholder="Select Client">
-                          {selectedClient ? selectedClient.name : undefined}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(Array.isArray(clients) ? clients : [])?.map?.(c => (
-                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="relative" ref={clientDropdownRef}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsClientDropdownOpen(!isClientDropdownOpen);
+                          setClientSearchQuery('');
+                        }}
+                        className="flex w-full items-center justify-between rounded-md border border-zinc-400 bg-white px-3 py-2 text-xs text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 focus:border-zinc-900 h-9 transition-all"
+                      >
+                        <span className={cn(!selectedClient && "text-zinc-500")}>
+                          {selectedClient ? selectedClient.name : "Select Client"}
+                        </span>
+                        <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
+                      </button>
+
+                      {isClientDropdownOpen && (
+                        <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-zinc-200 bg-white p-1 shadow-md animate-in fade-in slide-in-from-top-1 duration-100">
+                          <div className="flex items-center border-b border-zinc-150 px-2.5 pb-2 pt-1.5 sticky top-0 bg-white">
+                            <Search className="mr-2 h-3.5 w-3.5 shrink-0 opacity-50 text-zinc-500" />
+                            <input
+                              type="text"
+                              value={clientSearchQuery}
+                              onChange={(e) => setClientSearchQuery(e.target.value)}
+                              placeholder="Search client by name or mobile..."
+                              className="w-full text-xs outline-none bg-transparent placeholder:text-zinc-400 text-zinc-800"
+                              autoFocus
+                            />
+                            {clientSearchQuery && (
+                              <button 
+                                type="button" 
+                                onClick={() => setClientSearchQuery('')}
+                                className="text-zinc-400 hover:text-zinc-600 focus:outline-none"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                          <div className="pt-1">
+                            {filteredClients.length === 0 ? (
+                              <div className="py-2 text-center text-xs text-zinc-500">
+                                No client found
+                              </div>
+                            ) : (
+                              filteredClients.map((c) => {
+                                const isSelected = c.id === formData.clientId;
+                                return (
+                                  <button
+                                    key={c.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setFormData({ ...formData, clientId: c.id });
+                                      setQuotationItems([]);
+                                      setIsClientDropdownOpen(false);
+                                      setClientSearchQuery('');
+                                    }}
+                                    className={cn(
+                                      "relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none transition-colors text-left hover:bg-zinc-150 hover:text-zinc-900",
+                                      isSelected ? "bg-zinc-100 text-zinc-900 font-medium" : "text-zinc-700"
+                                    )}
+                                  >
+                                    <span className="flex-1 truncate">{c.name}</span>
+                                    {isSelected && <Check className="ml-auto h-3.5 w-3.5 text-zinc-900" />}
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
