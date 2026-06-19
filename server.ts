@@ -2079,36 +2079,23 @@ app.post('/api/clients', authenticate, async (req, res) => {
 
 app.put('/api/clients/:id', authenticate, async (req, res) => {
   try {
-    const { name, company, city, profitMargins, mobile, address, gstin } = req.body;
+    const { name, company, city, mobile, profitMargins } = req.body;
     
-    // Fetch existing to merge
-    const existRes = await pool.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
-    if (existRes.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
-    const existing = existRes.rows[0];
-
-    const updName = name !== undefined ? name : existing.name;
-    const updCompany = company !== undefined ? company : existing.company;
-    const updCity = city !== undefined ? city : existing.city;
-    const updProfitMargins = profitMargins !== undefined ? profitMargins : existing.profit_margins;
-    const updMobile = mobile !== undefined ? mobile : existing.mobile;
-    const updAddress = address !== undefined ? address : existing.address;
-    const updGstin = gstin !== undefined ? gstin : existing.gstin;
-
     const result = await pool.query(
-      'UPDATE clients SET name = $1, company = $2, city = $3, profit_margins = $4, mobile = $5, address = $6, gstin = $7 WHERE id = $8 RETURNING *',
-      [updName, updCompany, updCity, JSON.stringify(updProfitMargins), updMobile, updAddress, updGstin, req.params.id]
+      'UPDATE clients SET name = $1, company = $2, city = $3, mobile = $4, profit_margins = $5 WHERE id = $6 RETURNING *',
+      [name, company, city, mobile || null, JSON.stringify(profitMargins), req.params.id]
     );
+
     if (result.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
+    
     const row = result.rows[0];
     res.json({
       id: row.id,
       name: row.name,
       company: row.company,
       city: row.city,
-      profitMargins: row.profit_margins,
-      mobile: row.mobile || '',
-      address: row.address || '',
-      gstin: row.gstin || ''
+      mobile: row.mobile,
+      profitMargins: row.profit_margins
     });
   } catch (err) {
     console.error('Failed to update client', err);
