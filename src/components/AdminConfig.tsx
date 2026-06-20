@@ -746,7 +746,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                 <div className="flex-1 flex flex-col overflow-hidden">
                   {selectedBOMIdx !== null && localConfig.beltTypes[selectedCatIdx!]?.styles?.[selectedStyleIdx!]?.bom?.[selectedBOMIdx] ? (
                     <>
-                      <div className="flex-1 flex flex-col p-4 space-y-4 animate-in fade-in slide-in-from-right-2 duration-300 overflow-hidden">
+                      <div className="flex-1 flex flex-col p-4 space-y-4 animate-in fade-in slide-in-from-right-2 duration-300 overflow-y-auto pr-1 custom-scrollbar">
                         {(() => {
                           const item = localConfig.beltTypes[selectedCatIdx!]?.styles?.[selectedStyleIdx!]?.bom?.[selectedBOMIdx];
                           if (!item) return null;
