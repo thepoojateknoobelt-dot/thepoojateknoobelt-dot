@@ -4,7 +4,8 @@ import {
   ChevronRight, ChevronLeft, TrendingDown, Info,
   RotateCcw, Wand2, BarChart3, Loader2, Warehouse, User,
   ArrowLeft, X, Menu, Search, Printer, Download, Edit2, Check,
-  ClipboardList, Send, Clock, ArrowDownCircle, ExternalLink
+  ClipboardList, Send, Clock, ArrowDownCircle, ExternalLink,
+  Sliders
 } from 'lucide-react';
 import {
   saveRoll, updateRoll, deleteRoll, saveCut, deleteCut, fetchRolls, OperationType
@@ -999,28 +1000,31 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
       let { x, y } = manualPlacement.placement;
       let moved = false;
 
-      // Snap coordinates to 1 decimal place (10cm grid)
-      x = Math.round(x * 10) / 10;
-      y = Math.round(y * 10) / 10;
+      // Snap coordinates to 1mm grid
+      x = Math.round(x * 1000) / 1000;
+      y = Math.round(y * 1000) / 1000;
+
+      // Shift key for fine 1mm adjustments, normal key for 1cm adjustments
+      const step = e.shiftKey ? 0.001 : 0.01;
 
       if (e.key === 'ArrowLeft') {
-        x = Math.max(0, x - 0.1);
+        x = Math.max(0, x - step);
         moved = true;
       } else if (e.key === 'ArrowRight') {
-        x = Math.min(roll.fullLength - reqLength, x + 0.1);
+        x = Math.min(roll.fullLength - reqLength, x + step);
         moved = true;
       } else if (e.key === 'ArrowUp') {
-        y = Math.max(0, y - 0.1);
+        y = Math.max(0, y - step);
         moved = true;
       } else if (e.key === 'ArrowDown') {
-        y = Math.min(roll.fullWidth - reqWidth, y + 0.1);
+        y = Math.min(roll.fullWidth - reqWidth, y + step);
         moved = true;
       }
 
       if (moved) {
         e.preventDefault();
-        const newX = Math.round(x * 10) / 10;
-        const newY = Math.round(y * 10) / 10;
+        const newX = Math.round(x * 1000) / 1000;
+        const newY = Math.round(y * 1000) / 1000;
         setManualPlacement({
           rollId: roll.id,
           placement: { x: newX, y: newY }
@@ -3817,13 +3821,226 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                               );
                             })
                           ) : cuttingMode === 'manual' ? (
-                            <div className="p-2 bg-blue-50 border border-blue-150 rounded-lg flex-1 flex flex-col justify-center space-y-1">
-                              <p className="font-black uppercase tracking-wider text-[9px] text-blue-700 flex items-center gap-1">
-                                <Info size={11} /> Manual Mode Active
-                              </p>
-                              <p className="text-[9.5px] font-semibold text-slate-500 leading-relaxed text-left">
-                                Right side visualizer rolls me click karein cut place karne ke liye. Click karte hi popup open ho jaega.
-                              </p>
+                            <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl space-y-3">
+                              <div className="flex items-center justify-between border-b border-blue-150 pb-1.5">
+                                <p className="font-black uppercase tracking-wider text-[10px] text-blue-800 flex items-center gap-1">
+                                  <Sliders size={13} /> Manual Position Panel
+                                </p>
+                                <span className="text-[8px] font-black text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                  Precise Mode
+                                </span>
+                              </div>
+
+                              <div className="space-y-2">
+                                {/* Roll Selection */}
+                                <div className="space-y-1">
+                                  <label className="text-[8.5px] font-black text-slate-500 uppercase tracking-widest">
+                                    Target Roll
+                                  </label>
+                                  <select
+                                    value={manualPlacement?.rollId || (visibleRolls[0]?.id || '')}
+                                    onChange={(e) => {
+                                      const rId = e.target.value;
+                                      const roll = rolls.find(r => r.id === rId);
+                                      if (roll) {
+                                        setManualPlacement({
+                                          rollId: rId,
+                                          placement: manualPlacement?.placement || { x: 0, y: 0 }
+                                        });
+                                      }
+                                    }}
+                                    className="w-full px-2 py-1 border border-slate-200 rounded-lg font-bold text-xs bg-white cursor-pointer"
+                                  >
+                                    {visibleRolls.map(r => (
+                                      <option key={r.id} value={r.id}>
+                                        Roll {r.id} ({fromMeters(r.fullLength).toFixed(1)}{currentUnit} × {fromMeters(r.fullWidth).toFixed(1)}{currentUnit})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                {/* X and Y Coordinates Input */}
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="space-y-1">
+                                    <label className="text-[8.5px] font-black text-slate-500 uppercase tracking-widest">
+                                      Start X ({currentUnit})
+                                    </label>
+                                    <input
+                                      type="number"
+                                      step="0.001"
+                                      value={manualPlacement ? Number(fromMeters(manualPlacement.placement.x).toFixed(3)) : 0}
+                                      onChange={(e) => {
+                                        const val = parseFloat(e.target.value) || 0;
+                                        const xInMeters = toMeters(val);
+                                        const targetRollId = manualPlacement?.rollId || visibleRolls[0]?.id;
+                                        if (targetRollId) {
+                                          setManualPlacement({
+                                            rollId: targetRollId,
+                                            placement: {
+                                              x: Math.round(xInMeters * 1000) / 1000,
+                                              y: manualPlacement?.placement.y || 0
+                                            }
+                                          });
+                                        }
+                                      }}
+                                      className="w-full px-2 py-1 border border-slate-200 rounded-lg font-bold text-xs bg-white"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[8.5px] font-black text-slate-500 uppercase tracking-widest">
+                                      Start Y ({currentUnit})
+                                    </label>
+                                    <input
+                                      type="number"
+                                      step="0.001"
+                                      value={manualPlacement ? Number(fromMeters(manualPlacement.placement.y).toFixed(3)) : 0}
+                                      onChange={(e) => {
+                                        const val = parseFloat(e.target.value) || 0;
+                                        const yInMeters = toMeters(val);
+                                        const targetRollId = manualPlacement?.rollId || visibleRolls[0]?.id;
+                                        if (targetRollId) {
+                                          setManualPlacement({
+                                            rollId: targetRollId,
+                                            placement: {
+                                              x: manualPlacement?.placement.x || 0,
+                                              y: Math.round(yInMeters * 1000) / 1000
+                                            }
+                                          });
+                                        }
+                                      }}
+                                      className="w-full px-2 py-1 border border-slate-200 rounded-lg font-bold text-xs bg-white"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Align Helpers */}
+                                <div className="space-y-1.5 pt-1">
+                                  <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-widest block">
+                                    Quick Alignment / Fitting Helpers:
+                                  </span>
+                                  <div className="grid grid-cols-2 gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const rId = manualPlacement?.rollId || visibleRolls[0]?.id;
+                                        if (rId) {
+                                          setManualPlacement({
+                                            rollId: rId,
+                                            placement: { x: 0, y: manualPlacement?.placement.y || 0 }
+                                          });
+                                        }
+                                      }}
+                                      className="py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[9px] font-black text-slate-700 cursor-pointer shadow-sm active:scale-95 transition"
+                                    >
+                                      Align Left (X=0)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const rId = manualPlacement?.rollId || visibleRolls[0]?.id;
+                                        const roll = rolls.find(r => r.id === rId);
+                                        if (roll) {
+                                          const maxLimit = Math.max(0, roll.fullLength - activeOrderDimensions.length);
+                                          setManualPlacement({
+                                            rollId: rId,
+                                            placement: { x: maxLimit, y: manualPlacement?.placement.y || 0 }
+                                          });
+                                        }
+                                      }}
+                                      className="py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[9px] font-black text-slate-700 cursor-pointer shadow-sm active:scale-95 transition"
+                                    >
+                                      Align Right End
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const rId = manualPlacement?.rollId || visibleRolls[0]?.id;
+                                        if (rId) {
+                                          setManualPlacement({
+                                            rollId: rId,
+                                            placement: { x: manualPlacement?.placement.x || 0, y: 0 }
+                                          });
+                                        }
+                                      }}
+                                      className="py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[9px] font-black text-slate-700 cursor-pointer shadow-sm active:scale-95 transition"
+                                    >
+                                      Align Top (Y=0)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const rId = manualPlacement?.rollId || visibleRolls[0]?.id;
+                                        const roll = rolls.find(r => r.id === rId);
+                                        if (roll) {
+                                          const maxLimit = Math.max(0, roll.fullWidth - activeOrderDimensions.width);
+                                          setManualPlacement({
+                                            rollId: rId,
+                                            placement: { x: manualPlacement?.placement.x || 0, y: maxLimit }
+                                          });
+                                        }
+                                      }}
+                                      className="py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[9px] font-black text-slate-700 cursor-pointer shadow-sm active:scale-95 transition"
+                                    >
+                                      Align Bottom End
+                                    </button>
+                                  </div>
+
+                                  <div className="grid grid-cols-1 gap-1.5 mt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const rId = manualPlacement?.rollId || visibleRolls[0]?.id;
+                                        const roll = rolls.find(r => r.id === rId);
+                                        if (!roll) return;
+                                        let bestX = 0;
+                                        roll.cuts.forEach(cut => {
+                                          const candidateX = cut.x + cut.length;
+                                          const y = manualPlacement?.placement.y || 0;
+                                          if (isSpaceAvailable(roll, candidateX, y, activeOrderDimensions.width, activeOrderDimensions.length)) {
+                                            if (candidateX > bestX) bestX = candidateX;
+                                          }
+                                        });
+                                        setManualPlacement({
+                                          rollId: rId,
+                                          placement: {
+                                            x: Math.round(bestX * 1000) / 1000,
+                                            y: manualPlacement?.placement.y || 0
+                                          }
+                                        });
+                                      }}
+                                      className="py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-800 rounded text-[9px] font-black cursor-pointer shadow-sm active:scale-95 transition col-span-2 flex items-center justify-center gap-1"
+                                    >
+                                      🔗 Snug Fit X (Next to Cuts)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const rId = manualPlacement?.rollId || visibleRolls[0]?.id;
+                                        const roll = rolls.find(r => r.id === rId);
+                                        if (!roll) return;
+                                        let bestY = 0;
+                                        roll.cuts.forEach(cut => {
+                                          const candidateY = cut.y + cut.width;
+                                          const x = manualPlacement?.placement.x || 0;
+                                          if (isSpaceAvailable(roll, x, candidateY, activeOrderDimensions.width, activeOrderDimensions.length)) {
+                                            if (candidateY > bestY) bestY = candidateY;
+                                          }
+                                        });
+                                        setManualPlacement({
+                                          rollId: rId,
+                                          placement: {
+                                            x: manualPlacement?.placement.x || 0,
+                                            y: Math.round(bestY * 1000) / 1000
+                                          }
+                                        });
+                                      }}
+                                      className="py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-800 rounded text-[9px] font-black cursor-pointer shadow-sm active:scale-95 transition col-span-2 flex items-center justify-center gap-1"
+                                    >
+                                      🔗 Snug Fit Y (Below Cuts)
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
                           ) : selectedOrder.requiredWidth > 0 && selectedOrder.requiredLength > 0 && optimizationResults.length === 0 ? (
                             <div className="p-2 bg-rose-50 border border-rose-150 text-rose-800 rounded-lg flex-1 flex flex-col justify-center">

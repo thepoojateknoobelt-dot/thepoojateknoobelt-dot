@@ -86,9 +86,65 @@ const RollVisualizer: React.FC<RollVisualizerProps> = ({
     const rawX = (unscaledX - RULER_SIZE) / SCALE;
     const rawY = (unscaledY - RULER_SIZE) / SCALE;
     
-    // Snap to 10cm grid
-    const x = Math.max(0, Math.min(roll.fullLength - manualDimensions.length, Math.round(rawX * 10) / 10));
-    const y = Math.max(0, Math.min(roll.fullWidth - manualDimensions.width, Math.round(rawY * 10) / 10));
+    let x = rawX;
+    let y = rawY;
+    
+    // Snapping points for X
+    const snapXPoints = [0, roll.fullLength - manualDimensions.length];
+    roll.cuts.forEach(cut => {
+      snapXPoints.push(cut.x);
+      snapXPoints.push(cut.x + cut.length);
+      snapXPoints.push(cut.x - manualDimensions.length);
+    });
+    
+    // Snapping points for Y
+    const snapYPoints = [0, roll.fullWidth - manualDimensions.width];
+    roll.cuts.forEach(cut => {
+      snapYPoints.push(cut.y);
+      snapYPoints.push(cut.y + cut.width);
+      snapYPoints.push(cut.y - manualDimensions.width);
+    });
+    
+    // Threshold for magnetic snapping: 0.15 meters (15 cm)
+    const SNAP_THRESHOLD = 0.15;
+    
+    let closestX = x;
+    let minDiffX = Infinity;
+    snapXPoints.forEach(pt => {
+      const diff = Math.abs(x - pt);
+      if (diff < minDiffX) {
+        minDiffX = diff;
+        closestX = pt;
+      }
+    });
+    
+    if (minDiffX <= SNAP_THRESHOLD) {
+      x = closestX;
+    } else {
+      // Snap to 1mm grid
+      x = Math.round(x * 1000) / 1000;
+    }
+    
+    let closestY = y;
+    let minDiffY = Infinity;
+    snapYPoints.forEach(pt => {
+      const diff = Math.abs(y - pt);
+      if (diff < minDiffY) {
+        minDiffY = diff;
+        closestY = pt;
+      }
+    });
+    
+    if (minDiffY <= SNAP_THRESHOLD) {
+      y = closestY;
+    } else {
+      // Snap to 1mm grid
+      y = Math.round(y * 1000) / 1000;
+    }
+    
+    // Constrain coordinates to roll boundaries
+    x = Math.max(0, Math.min(roll.fullLength - manualDimensions.length, x));
+    y = Math.max(0, Math.min(roll.fullWidth - manualDimensions.width, y));
     
     return { x, y };
   };
