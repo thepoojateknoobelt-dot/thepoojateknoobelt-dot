@@ -56,12 +56,23 @@ export interface StockStats {
   activeRolls: number;
 }
 
+export interface MaterialPiece {
+  pieceNo: number;
+  weight: number;
+}
+
+export interface MaterialLot {
+  lotNumber: string;
+  pieces: MaterialPiece[];
+}
+
 export interface MaterialStock {
   id: string;
   name: string;
   quantity: number;
   unit: string;
   reorderLevel: number;
+  lots?: MaterialLot[];
 }
 
 export interface MaterialIssue {
