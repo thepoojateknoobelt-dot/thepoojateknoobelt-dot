@@ -2311,15 +2311,15 @@ app.get('/api/rolls', async (req, res) => {
 });
 
 app.post('/api/rolls', async (req, res) => {
-  const { id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived, isReuse, parentRollId, status } = req.body;
+  const { id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived, isReuse, parentRollId, status, reorderLevel } = req.body;
   const computedIsReuse = isReuse || (id && id.startsWith('REUSE-')) || false;
   try {
     await pool.query(
-      `INSERT INTO rolls (id, material_type, full_width, full_length, total_sqm, remaining_sqm, is_archived, is_reuse, parent_roll_id, status) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived || false, computedIsReuse, parentRollId || null, status || 'active']
+      `INSERT INTO rolls (id, material_type, full_width, full_length, total_sqm, remaining_sqm, is_archived, is_reuse, parent_roll_id, status, reorder_level) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived || false, computedIsReuse, parentRollId || null, status || 'active', parseFloat(reorderLevel) || 0]
     );
-    res.json({ id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived: isArchived || false, isReuse: computedIsReuse, parentRollId: parentRollId || null, status: status || 'active', cuts: [] });
+    res.json({ id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived: isArchived || false, isReuse: computedIsReuse, parentRollId: parentRollId || null, status: status || 'active', reorderLevel: parseFloat(reorderLevel) || 0, cuts: [] });
   } catch (err) {
     console.error('Failed to create roll', err);
     res.status(500).json({ error: 'Failed to create roll' });
