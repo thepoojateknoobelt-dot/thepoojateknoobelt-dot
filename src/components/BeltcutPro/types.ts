@@ -83,6 +83,7 @@ export interface MaterialIssue {
   unit: string;
   issuedTo: string;
   notes: string;
+  lotNumber?: string;
   issuedAt: string;
 }
 
@@ -98,6 +99,21 @@ export interface MaterialRequest {
   approvedQuantity?: number | null;
   approvedBy?: string;
   approvalNotes?: string;
+  lotNumber?: string;
   requestedAt: string;
   approvedAt?: string | null;
+}
+
+export interface ReadyBeltStock {
+  id: string;
+  category: string;
+  beltStock: string;
+  size: string;
+  openingPisc: number;
+  recvPisc: number;
+  issuesPisc: number;
+  closingPisc: number;
+  soNo: string;
+  receiverName: string;
+  detailsLog?: any[];
 }

@@ -12,7 +12,7 @@ import {
 } from './services/firebase';
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
-import { Roll, Cut, Order, OptimizationCandidate, Unit, MaterialStock, MaterialIssue, MaterialRequest } from './types';
+import { Roll, Cut, Order, OptimizationCandidate, Unit, MaterialStock, MaterialIssue, MaterialRequest, ReadyBeltStock } from './types';
 import {
   MATERIAL_TYPES,
   CUT_COLORS
@@ -20,6 +20,7 @@ import {
 import { findGlobalBestPlacement, isSpaceAvailable } from './services/optimizationEngine';
 import RollVisualizer from './components/RollVisualizer';
 import StatsCard from './components/StatsCard';
+import { SearchableSelect } from './components/SearchableSelect';
 import { getShortRollId } from './utils';
 
 const CONVERSIONS: Record<Unit, number> = {
@@ -34,6 +35,93 @@ const isRollReuse = (roll: Roll) => {
   return !!(roll.isReuse || (roll.id && (roll.id.startsWith('REUSE-') || roll.id.startsWith('INV-') || roll.id.startsWith('SCRAP-'))));
 };
 
+const parseLocaleDateString = (dateStr: string): Date | null => {
+  if (!dateStr) return null;
+  try {
+    const parts = dateStr.split(',');
+    if (parts.length < 1) return null;
+    const dateParts = parts[0].trim().split('/');
+    if (dateParts.length !== 3) return null;
+    
+    const day = parseInt(dateParts[0], 10);
+    const month = parseInt(dateParts[1], 10) - 1;
+    const year = parseInt(dateParts[2], 10);
+
+    let hours = 0;
+    let minutes = 0;
+    let seconds = 0;
+
+    if (parts.length > 1) {
+      const timeParts = parts[1].trim().split(' ');
+      const timeHMS = timeParts[0].split(':');
+      hours = parseInt(timeHMS[0], 10);
+      minutes = parseInt(timeHMS[1], 10) || 0;
+      seconds = parseInt(timeHMS[2], 10) || 0;
+
+      if (timeParts.length > 1) {
+        const ampm = timeParts[1].toLowerCase();
+        if (ampm.includes('pm') && hours < 12) {
+          hours += 12;
+        } else if (ampm.includes('am') && hours === 12) {
+          hours = 0;
+        }
+      }
+    }
+    return new Date(year, month, day, hours, minutes, seconds);
+  } catch (e) {
+    return null;
+  }
+};
+
+const getStockStatusForDate = (item: ReadyBeltStock, targetDateStr: string) => {
+  if (!targetDateStr) {
+    return {
+      received: 0,
+      issued: 0,
+      closing: item.openingPisc
+    };
+  }
+
+  const dateParts = targetDateStr.split('-');
+  const targetYear = parseInt(dateParts[0], 10);
+  const targetMonth = parseInt(dateParts[1], 10) - 1;
+  const targetDay = parseInt(dateParts[2], 10);
+  
+  const targetDateEnd = new Date(targetYear, targetMonth, targetDay, 23, 59, 59, 999);
+
+  let receivedOnDate = 0;
+  let issuedOnDate = 0;
+  let recvAfter = 0;
+  let issueAfter = 0;
+
+  (item.detailsLog || []).forEach((log: any) => {
+    const logDate = parseLocaleDateString(log.dateTime);
+    if (!logDate) return;
+
+    const isSameDay = logDate.getFullYear() === targetYear &&
+                      logDate.getMonth() === targetMonth &&
+                      logDate.getDate() === targetDay;
+
+    if (isSameDay) {
+      if (log.recvQty) receivedOnDate += log.recvQty;
+      if (log.issuesQty) issuedOnDate += log.issuesQty;
+    }
+
+    if (logDate > targetDateEnd) {
+      if (log.recvQty) recvAfter += log.recvQty;
+      if (log.issuesQty) issueAfter += log.issuesQty;
+    }
+  });
+
+  const closingAtDate = item.openingPisc - recvAfter + issueAfter;
+
+  return {
+    received: receivedOnDate,
+    issued: issuedOnDate,
+    closing: closingAtDate
+  };
+};
+
 const isInventoryCutName = (name?: string) => {
   if (!name) return false;
   const upper = name.toUpperCase().trim();
@@ -42,9 +130,9 @@ const isInventoryCutName = (name?: string) => {
 
 const findInventoryRollForCut = (rolls: Roll[], parentRollId: string, cut: Cut) => {
   // 1. Try exact ID match: REUSE-parentRollId-cutId, INV-parentRollId-cutId or ending with cutId
-  let matchedRoll = rolls.find(r => 
-    r.id === `REUSE-${parentRollId}-${cut.id}` || 
-    r.id === `INV-${parentRollId}-${cut.id}` || 
+  let matchedRoll = rolls.find(r =>
+    r.id === `REUSE-${parentRollId}-${cut.id}` ||
+    r.id === `INV-${parentRollId}-${cut.id}` ||
     r.id.endsWith(cut.id)
   );
   if (matchedRoll) return matchedRoll;
@@ -53,7 +141,7 @@ const findInventoryRollForCut = (rolls: Roll[], parentRollId: string, cut: Cut) 
   const parentRoll = rolls.find(r => r.id === parentRollId);
   const materialType = parentRoll?.materialType;
 
-  const candidates = rolls.filter(r => 
+  const candidates = rolls.filter(r =>
     r.parentRollId === parentRollId &&
     (!materialType || r.materialType === materialType) &&
     Math.abs(r.fullWidth - cut.width) < 0.01 &&
@@ -82,7 +170,7 @@ interface BeltcutProProps {
 
 export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
   const { user } = useAuth();
-  
+
   const tabPermissionMap = {
     dashboard: 'nesting_dashboard',
     cutting: 'nesting_cutting',
@@ -95,7 +183,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
 
   const getInitialTab = () => {
     if (user?.role === 'admin') return 'dashboard';
-    const allowed = ['dashboard', 'cutting', 'rolls_map', 'details', 'stock', 'production', 'scrub'].filter(t => 
+    const allowed = ['dashboard', 'cutting', 'rolls_map', 'details', 'stock', 'production', 'scrub'].filter(t =>
       user?.allowedPages?.includes((tabPermissionMap as any)[t])
     );
     return (allowed[0] as any) || 'dashboard';
@@ -146,6 +234,16 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
   const [materialStocks, setMaterialStocks] = useState<MaterialStock[]>([]);
   const [newMaterialStock, setNewMaterialStock] = useState({ name: '', quantity: '', unit: 'pcs', reorderLevel: '' });
   const [config, setConfig] = useState<any>(null);
+  const [formLots, setFormLots] = useState<any[]>([]);
+  const [expandedStockIds, setExpandedStockIds] = useState<string[]>([]);
+
+  // Synchronize lots count with quantity in "Add Material" form
+  useEffect(() => {
+    if (formLots.length > 0) {
+      const totalPieces = formLots.reduce((sum, lot) => sum + (lot.pieces?.length || 0), 0);
+      setNewMaterialStock(prev => ({ ...prev, quantity: totalPieces.toString() }));
+    }
+  }, [formLots]);
 
   const loadConfigData = async () => {
     try {
@@ -159,8 +257,27 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
     }
   };
   const [editingMaterialStock, setEditingMaterialStock] = useState<MaterialStock | null>(null);
+
+  // Synchronize lots count with quantity in "Edit Material" inline form
+  useEffect(() => {
+    if (editingMaterialStock) {
+      setFormLots(editingMaterialStock.lots || []);
+    } else {
+      setFormLots([]);
+    }
+  }, [editingMaterialStock?.id]);
+
+  useEffect(() => {
+    if (editingMaterialStock && formLots.length > 0) {
+      const totalPieces = formLots.reduce((sum, lot) => sum + (lot.pieces?.length || 0), 0);
+      if (editingMaterialStock.quantity !== totalPieces) {
+        setEditingMaterialStock(prev => prev ? { ...prev, quantity: totalPieces } : null);
+      }
+    }
+  }, [formLots]);
+
   const [showAddMaterialForm, setShowAddMaterialForm] = useState(false);
-  const [activeInventoryCard, setActiveInventoryCard] = useState<'materials' | 'remnants' | 'fresh' | 'reorder' | 'requests' | null>(null);
+  const [activeInventoryCard, setActiveInventoryCard] = useState<'materials' | 'remnants' | 'fresh' | 'reorder' | 'requests' | 'ready_belt' | null>(null);
   const [editingReorderLevel, setEditingReorderLevel] = useState<Record<string, string>>({}); // stockId -> input value
   const [savingReorderLevel, setSavingReorderLevel] = useState<string | null>(null); // stockId being saved
   const [editingRollReorderLevel, setEditingRollReorderLevel] = useState<Record<string, string>>({}); // rollId -> input value
@@ -183,12 +300,12 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
   // Material Requests states
   const [materialRequests, setMaterialRequests] = useState<MaterialRequest[]>([]);
   const [showRequestModal, setShowRequestModal] = useState(false);
-  const [requestForm, setRequestForm] = useState({ materialId: '', quantity: '', notes: '' });
+  const [requestForm, setRequestForm] = useState({ materialId: '', quantity: '', notes: '', lotNumber: '' });
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
 
   const [approvingRequest, setApprovingRequest] = useState<MaterialRequest | null>(null);
   const [showApprovalModal, setShowApprovalModal] = useState(false);
-  const [approvalForm, setApprovalForm] = useState({ approvedQuantity: '', approvalNotes: '' });
+  const [approvalForm, setApprovalForm] = useState({ approvedQuantity: '', approvalNotes: '', lotNumber: '' });
   const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
   const [requestsSubTab, setRequestsSubTab] = useState<'pending' | 'history'>('pending');
   const [reorderSubTab, setReorderSubTab] = useState<'materials' | 'rolls' | 'remnants'>('materials');
@@ -205,6 +322,44 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
   const [selectedOrderData, setSelectedOrderData] = useState<any | null>(null);
   const [selectedItemIndex, setSelectedItemIndex] = useState<number | null>(null);
   const [justCutExecuted, setJustCutExecuted] = useState(false);
+
+  // Ready Belt Stocks states
+  const [readyBeltStocks, setReadyBeltStocks] = useState<ReadyBeltStock[]>([]);
+  const [readyBeltSearchQuery, setReadyBeltSearchQuery] = useState('');
+  const [readyBeltDateFilter, setReadyBeltDateFilter] = useState('');
+  const [showAddReadyBeltForm, setShowAddReadyBeltForm] = useState(false);
+  const [newReadyBeltStock, setNewReadyBeltStock] = useState({
+    category: 'BROWN BELT',
+    beltStock: '',
+    size: '',
+    openingPisc: '',
+    recvPisc: '',
+    issuesPisc: '',
+    soNo: '',
+    receiverName: ''
+  });
+  const [editingReadyBeltStock, setEditingReadyBeltStock] = useState<ReadyBeltStock | null>(null);
+  const [selectedHistoryItem, setSelectedHistoryItem] = useState<ReadyBeltStock | null>(null);
+  const [selectedIssueItem, setSelectedIssueItem] = useState<ReadyBeltStock | null>(null);
+  const [selectedUpdateItem, setSelectedUpdateItem] = useState<ReadyBeltStock | null>(null);
+  const [issueForm, setIssueForm] = useState({
+    issuesPisc: '',
+    soNo: '',
+    receiverName: ''
+  });
+  const [updateForm, setUpdateForm] = useState({ recvPisc: '' });
+
+  const loadReadyBeltStocksData = async () => {
+    try {
+      const res = await fetch('/api/ready-belt-stocks');
+      if (res.ok) {
+        const data = await res.json();
+        setReadyBeltStocks(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch ready belt stocks:", err);
+    }
+  };
 
   const loadMaterialStocksData = async () => {
     try {
@@ -358,12 +513,14 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
         body: JSON.stringify({
           name: newMaterialStock.name.trim(),
           quantity: parseFloat(newMaterialStock.quantity) || 0,
-          unit: newMaterialStock.unit.trim() || 'pcs'
+          unit: newMaterialStock.unit.trim() || 'pcs',
+          lots: formLots
         })
       });
       if (res.ok) {
         toast.success("Material stock added successfully!");
         setNewMaterialStock({ name: '', quantity: '', unit: 'pcs', reorderLevel: '' });
+        setFormLots([]);
         setShowAddMaterialForm(false);
         loadMaterialStocksData();
       } else {
@@ -384,12 +541,14 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
         body: JSON.stringify({
           name: editingMaterialStock.name.trim(),
           quantity: editingMaterialStock.quantity,
-          unit: editingMaterialStock.unit
+          unit: editingMaterialStock.unit,
+          lots: formLots
         })
       });
       if (res.ok) {
         toast.success("Material stock updated successfully!");
         setEditingMaterialStock(null);
+        setFormLots([]);
         loadMaterialStocksData();
       } else {
         const errData = await res.json().catch(() => ({}));
@@ -415,6 +574,179 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
       }
     } catch (err) {
       toast.error("Failed to delete material stock");
+    }
+  };
+
+  const handleAddReadyBeltStock = async () => {
+    if (!newReadyBeltStock.beltStock.trim() || !newReadyBeltStock.size.trim()) {
+      toast.error("Belt Stock Name and Size are required.");
+      return;
+    }
+    try {
+      const res = await fetch('/api/ready-belt-stocks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: newReadyBeltStock.category,
+          beltStock: newReadyBeltStock.beltStock.trim(),
+          size: newReadyBeltStock.size.trim(),
+          openingPisc: parseInt(newReadyBeltStock.openingPisc, 10) || 0,
+          recvPisc: parseInt(newReadyBeltStock.recvPisc, 10) || 0,
+          issuesPisc: parseInt(newReadyBeltStock.issuesPisc, 10) || 0,
+          soNo: newReadyBeltStock.soNo.trim(),
+          receiverName: newReadyBeltStock.receiverName.trim()
+        })
+      });
+      if (res.ok) {
+        toast.success("Ready Belt Stock added successfully!");
+        setNewReadyBeltStock({
+          category: 'BROWN BELT',
+          beltStock: '',
+          size: '',
+          openingPisc: '',
+          recvPisc: '',
+          issuesPisc: '',
+          soNo: '',
+          receiverName: ''
+        });
+        setShowAddReadyBeltForm(false);
+        loadReadyBeltStocksData();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData.error || "Failed to add ready belt stock");
+      }
+    } catch (err) {
+      toast.error("Failed to add ready belt stock");
+    }
+  };
+
+  const handleUpdateReadyBeltStock = async () => {
+    if (!editingReadyBeltStock || !editingReadyBeltStock.beltStock.trim() || !editingReadyBeltStock.size.trim()) return;
+    try {
+      const res = await fetch(`/api/ready-belt-stocks/${editingReadyBeltStock.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: editingReadyBeltStock.category,
+          beltStock: editingReadyBeltStock.beltStock.trim(),
+          size: editingReadyBeltStock.size.trim(),
+          openingPisc: editingReadyBeltStock.openingPisc,
+          recvPisc: editingReadyBeltStock.recvPisc,
+          issuesPisc: editingReadyBeltStock.issuesPisc,
+          soNo: editingReadyBeltStock.soNo.trim(),
+          receiverName: editingReadyBeltStock.receiverName.trim()
+        })
+      });
+      if (res.ok) {
+        toast.success("Ready Belt Stock updated successfully!");
+        setEditingReadyBeltStock(null);
+        loadReadyBeltStocksData();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData.error || "Failed to update ready belt stock");
+      }
+    } catch (err) {
+      toast.error("Failed to update ready belt stock");
+    }
+  };
+
+  const handleDeleteReadyBeltStock = async (id: string, name: string) => {
+    if (!window.confirm(`Are you sure you want to delete "${name}"?`)) return;
+    try {
+      const res = await fetch(`/api/ready-belt-stocks/${id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        toast.success("Ready Belt Stock deleted successfully!");
+        loadReadyBeltStocksData();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData.error || "Failed to delete ready belt stock");
+      }
+    } catch (err) {
+      toast.error("Failed to delete ready belt stock");
+    }
+  };
+
+  const handleIssueSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedIssueItem) return;
+    const qty = parseInt(issueForm.issuesPisc, 10);
+    if (isNaN(qty) || qty <= 0) {
+      toast.error("Please enter a valid quantity to issue.");
+      return;
+    }
+    if (qty > selectedIssueItem.closingPisc) {
+      if (!window.confirm(`Warning: You are issuing ${qty} pieces, which exceeds the current closing stock of ${selectedIssueItem.closingPisc} pieces. Proceed anyway?`)) {
+        return;
+      }
+    }
+
+    try {
+      const res = await fetch(`/api/ready-belt-stocks/${selectedIssueItem.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: selectedIssueItem.category,
+          beltStock: selectedIssueItem.beltStock,
+          size: selectedIssueItem.size,
+          openingPisc: selectedIssueItem.openingPisc,
+          recvPisc: selectedIssueItem.recvPisc,
+          issuesPisc: selectedIssueItem.issuesPisc + qty,
+          soNo: issueForm.soNo.trim(),
+          receiverName: issueForm.receiverName.trim()
+        })
+      });
+      if (res.ok) {
+        toast.success(`Issued ${qty} pieces successfully!`);
+        setSelectedIssueItem(null);
+        setIssueForm({ issuesPisc: '', soNo: '', receiverName: '' });
+        loadReadyBeltStocksData();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData.error || "Failed to issue stock");
+      }
+    } catch (err) {
+      toast.error("Failed to issue stock");
+    }
+  };
+
+  const handleUpdateSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedUpdateItem) return;
+    const qty = parseInt(updateForm.recvPisc, 10);
+    if (isNaN(qty) || qty <= 0) {
+      toast.error("Please enter a valid quantity.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/ready-belt-stocks/${selectedUpdateItem.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: selectedUpdateItem.category,
+          beltStock: selectedUpdateItem.beltStock,
+          size: selectedUpdateItem.size,
+          openingPisc: selectedUpdateItem.openingPisc,
+          recvPisc: selectedUpdateItem.recvPisc + qty,
+          issuesPisc: selectedUpdateItem.issuesPisc,
+          soNo: '-',
+          receiverName: '-'
+        })
+      });
+
+      if (res.ok) {
+        toast.success(`Received ${qty} pieces successfully!`);
+        setSelectedUpdateItem(null);
+        setUpdateForm({ recvPisc: '' });
+        loadReadyBeltStocksData();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData.error || "Failed to update stock");
+      }
+    } catch (err) {
+      toast.error("Failed to update stock");
     }
   };
 
@@ -560,13 +892,14 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
           requestedQuantity: qty,
           unit: mat.unit,
           requestedBy: requesterName,
-          notes: requestForm.notes.trim()
+          notes: requestForm.notes.trim(),
+          lotNumber: requestForm.lotNumber || undefined
         })
       });
       if (res.ok) {
         toast.success('Material request sent successfully!');
         setShowRequestModal(false);
-        setRequestForm({ materialId: '', quantity: '', notes: '' });
+        setRequestForm({ materialId: '', quantity: '', notes: '', lotNumber: '' });
         await loadMaterialRequestsData();
       } else {
         toast.error('Failed to send request');
@@ -583,7 +916,8 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
     setApprovingRequest(req);
     setApprovalForm({
       approvedQuantity: req.requestedQuantity.toString(),
-      approvalNotes: ''
+      approvalNotes: '',
+      lotNumber: req.lotNumber || ''
     });
     setShowApprovalModal(true);
   };
@@ -604,7 +938,8 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
         body: JSON.stringify({
           approvedQuantity: qty,
           approvalNotes: approvalForm.approvalNotes.trim(),
-          approvedBy: approvedByName
+          approvedBy: approvedByName,
+          lotNumber: approvalForm.lotNumber || undefined
         })
       });
       if (res.ok) {
@@ -697,6 +1032,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
     loadMaterialRequestsData();
     loadMaterialTypeReorders();
     loadMaterialTypesData();
+    loadReadyBeltStocksData();
   }, []);
 
   const bomComponentNames = useMemo(() => {
@@ -802,9 +1138,12 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
     soNumber: ''
   });
 
+  const [selectedLotNumber, setSelectedLotNumber] = useState('');
+
   useEffect(() => {
     setCuttingSelectedRollId('');
     setRollSearchQuery('');
+    setSelectedLotNumber('');
   }, [selectedOrder.materialType]);
 
   useEffect(() => {
@@ -838,7 +1177,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
   // Check which items are completed
   const completedItemIndices = useMemo(() => {
     if (!selectedOrderData || !Array.isArray(selectedOrderData.items)) return new Set<number>();
-    
+
     const completedSet = new Set<number>();
     const remainingCuts = [...selectedOrderCuts];
 
@@ -855,8 +1194,8 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
       const wMtr = convertToMeters(item.dimensions.width, item.dimensions.widthUnit || item.dimensions.unit);
       const lMtr = convertToMeters(item.dimensions.length, item.dimensions.lengthUnit || item.dimensions.unit);
 
-      const matchIdx = remainingCuts.findIndex(c => 
-        Math.abs(c.width - wMtr) < 0.002 && 
+      const matchIdx = remainingCuts.findIndex(c =>
+        Math.abs(c.width - wMtr) < 0.002 &&
         Math.abs(c.length - lMtr) < 0.002
       );
 
@@ -875,11 +1214,11 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
       if (justCutExecuted) {
         setJustCutExecuted(false);
         const nextPendingIdx = selectedOrderData.items.findIndex((_: any, idx: number) => !completedItemIndices.has(idx));
-        
+
         if (nextPendingIdx !== -1) {
           setSelectedItemIndex(nextPendingIdx);
           const nextItem = selectedOrderData.items[nextPendingIdx];
-          
+
           const convertToMeters = (val: number, unit?: string) => {
             const u = (unit || 'mm').toLowerCase();
             if (u === 'mm') return val / 1000;
@@ -896,10 +1235,10 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
             if (bt.includes('pu') || bt.includes('heat')) return 'PU - Blue Heat Resistant';
             return MATERIAL_TYPES[0];
           };
-          
+
           const w = convertToMeters(nextItem.dimensions.width, nextItem.dimensions.widthUnit || nextItem.dimensions.unit || 'mm');
           const l = convertToMeters(nextItem.dimensions.length, nextItem.dimensions.lengthUnit || nextItem.dimensions.unit || 'mm');
-          
+
           setSelectedOrder(prev => ({
             ...prev,
             requiredWidth: w,
@@ -1327,7 +1666,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
     }
 
     const previewList: any[] = [];
-    
+
     for (let i = 0; i < quantity; i++) {
       const candidates = findGlobalBestPlacement(activeRollsSim, {
         ...selectedOrder,
@@ -1488,7 +1827,8 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
               quantity: cutArea,
               unit: matchingStock?.unit || 'sqm',
               issuedTo: 'REUSE STOCK',
-              notes: `Auto-logged on inventory cut from parent Roll ${item.rollId}`
+              notes: `Auto-logged on inventory cut from parent Roll ${item.rollId}`,
+              lotNumber: selectedLotNumber || undefined
             })
           });
           await loadMaterialStocksData();
@@ -1651,7 +1991,8 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                 quantity: cutArea,
                 unit: matchingStock?.unit || 'sqm',
                 issuedTo: 'REUSE STOCK',
-                notes: `Auto-logged on inventory cut from parent Roll ${p.rollId}`
+                notes: `Auto-logged on inventory cut from parent Roll ${p.rollId}`,
+                lotNumber: selectedLotNumber || undefined
               })
             });
             await loadMaterialStocksData();
@@ -1835,7 +2176,8 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
               quantity: cutArea,
               unit: matchingStock?.unit || 'sqm',
               issuedTo: 'REUSE STOCK',
-              notes: `Auto-logged on inventory cut from parent Roll ${rollId}`
+              notes: `Auto-logged on inventory cut from parent Roll ${rollId}`,
+              lotNumber: selectedLotNumber || undefined
             })
           });
           await loadMaterialStocksData();
@@ -1913,6 +2255,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
       totalSqm: newRoll.fullWidth * newRoll.fullLength,
       remainingSqm: newRoll.fullWidth * newRoll.fullLength,
       isArchived: false,
+      reorderLevel: 0,
       cuts: []
     };
 
@@ -2159,7 +2502,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
     const unscaledHeight = roll.fullWidth * 35 + 55 + 40;
     svgClone.setAttribute('width', unscaledWidth.toString());
     svgClone.setAttribute('height', unscaledHeight.toString());
-    
+
     svgClone.style.width = '100%';
     svgClone.style.height = 'auto';
     svgClone.style.maxWidth = '100%';
@@ -2681,6 +3024,30 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
     );
   }, [materialStocks, materialSearchQuery]);
 
+  const filteredReadyBeltStocksList = useMemo(() => {
+    if (!readyBeltSearchQuery) return readyBeltStocks;
+    const query = readyBeltSearchQuery.toLowerCase().trim();
+    return readyBeltStocks.filter(item =>
+      (item.category || '').toLowerCase().includes(query) ||
+      (item.beltStock || '').toLowerCase().includes(query) ||
+      (item.size || '').toLowerCase().includes(query) ||
+      (item.soNo || '').toLowerCase().includes(query) ||
+      (item.receiverName || '').toLowerCase().includes(query)
+    );
+  }, [readyBeltStocks, readyBeltSearchQuery]);
+
+  const readyBeltGroups = useMemo(() => {
+    const groups: Record<string, ReadyBeltStock[]> = {};
+    filteredReadyBeltStocksList.forEach(item => {
+      const cat = item.category || 'OTHER';
+      if (!groups[cat]) {
+        groups[cat] = [];
+      }
+      groups[cat].push(item);
+    });
+    return groups;
+  }, [filteredReadyBeltStocksList]);
+
   const filteredRemnantRollsList = useMemo(() => {
     const activeRemnants = rolls.filter(r => r.status !== 'refused' && isRollReuse(r));
     if (!remnantSearchQuery) return activeRemnants;
@@ -2983,11 +3350,10 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
               </span>
             </h2>
             {['scrub', 'details', 'rolls_map', 'production'].includes(activeTab) && (
-              <div className={`relative flex items-center gap-2 shrink-0 ${
-                activeTab === 'production'
+              <div className={`relative flex items-center gap-2 shrink-0 ${activeTab === 'production'
                   ? 'flex-1 max-w-[180px] sm:max-w-[380px] md:max-w-[480px]'
                   : 'w-32 sm:w-60'
-              }`}>
+                }`}>
                 <div className="relative flex-1">
                   <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
                     <Search className="h-3.5 w-3.5 text-zinc-400" />
@@ -3311,7 +3677,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                 {selectedOrderData.items.map((item: any, idx: number) => {
                                   const isSelected = selectedItemIndex === idx;
                                   const isCompleted = completedItemIndices.has(idx);
-                                  
+
                                   const itemWidth = item.dimensions.width;
                                   const itemLength = item.dimensions.length;
                                   const itemUnit = item.dimensions.unit || 'mm';
@@ -3349,27 +3715,24 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                           materialType: matchMaterialType(item.beltType)
                                         }));
                                       }}
-                                      className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all duration-200 flex items-center justify-between gap-3 cursor-pointer shadow-sm ${
-                                        isCompleted
+                                      className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all duration-200 flex items-center justify-between gap-3 cursor-pointer shadow-sm ${isCompleted
                                           ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100/50'
                                           : isSelected
                                             ? 'border-zinc-950 bg-zinc-950 text-white font-bold'
                                             : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
-                                      }`}
+                                        }`}
                                     >
                                       <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-1.5">
-                                          <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                                            isSelected ? 'bg-zinc-800 text-zinc-300' : 'bg-slate-200 text-slate-500'
-                                          }`}>
+                                          <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${isSelected ? 'bg-zinc-800 text-zinc-300' : 'bg-slate-200 text-slate-500'
+                                            }`}>
                                             Item #{idx + 1}
                                           </span>
                                           {isCompleted ? (
                                             <span className="text-[7.5px] font-black text-emerald-700 bg-emerald-100 px-1 py-0.2 rounded uppercase">✓ Done</span>
                                           ) : (
-                                            <span className={`text-[7.5px] font-black uppercase px-1 py-0.2 rounded ${
-                                              isSelected ? 'bg-indigo-900/50 text-indigo-200' : 'bg-amber-50 text-amber-700'
-                                            }`}>Pending</span>
+                                            <span className={`text-[7.5px] font-black uppercase px-1 py-0.2 rounded ${isSelected ? 'bg-indigo-900/50 text-indigo-200' : 'bg-amber-50 text-amber-700'
+                                              }`}>Pending</span>
                                           )}
                                         </div>
                                         <p className={`font-black text-xs mt-1.5 ${isSelected ? 'text-white' : 'text-zinc-900'}`}>
@@ -3461,7 +3824,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                     .filter(r => {
                                       // Only show rolls that are active (not refused)
                                       if (r.status === 'refused') return false;
-                                      
+
                                       const q = rollSearchQuery.toLowerCase();
                                       if (!q) return true;
                                       const rollSize = `${fromMeters(r.fullLength).toFixed(2)}${currentUnit} x ${fromMeters(r.fullWidth).toFixed(2)}${currentUnit}`.toLowerCase();
@@ -3623,24 +3986,41 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
 
                           <div className="space-y-1">
                             <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Belt Material Type</label>
-                            <select
+                            <SearchableSelect
+                              options={materialTypes.map(type => ({ value: type, label: type }))}
                               value={selectedOrder.materialType}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                if (val === '__ADD_NEW__') {
-                                  setPreviousMaterialTypeVal(selectedOrder.materialType);
-                                  setMaterialTypeAddSource('selectedOrder');
-                                  setShowAddMaterialModal(true);
-                                } else {
-                                  setSelectedOrder({ ...selectedOrder, materialType: val });
-                                }
+                              onChange={(val) => setSelectedOrder({ ...selectedOrder, materialType: val })}
+                              onAddNew={() => {
+                                setPreviousMaterialTypeVal(selectedOrder.materialType);
+                                setMaterialTypeAddSource('selectedOrder');
+                                setShowAddMaterialModal(true);
                               }}
-                              className="w-full px-2.5 py-1 border border-slate-200 rounded-lg focus:border-zinc-950 focus:outline-none font-bold text-xs bg-white cursor-pointer"
-                            >
-                              {materialTypes.map(type => <option key={type} value={type}>{type}</option>)}
-                              <option value="__ADD_NEW__" className="text-indigo-600 font-bold bg-indigo-50 font-black">+ Add Custom Material Type...</option>
-                            </select>
+                              disabled={cutPurpose === 'order' && !!selectedOrderNumber && !isOrderDimensionsUnlocked}
+                            />
                           </div>
+
+                          {(() => {
+                            const matchingStockForLot = materialStocks.find(s => s.name === selectedOrder.materialType);
+                            const availableLots = matchingStockForLot?.lots || [];
+                            if (availableLots.length === 0) return null;
+                            return (
+                              <div className="space-y-1 animate-in fade-in duration-200">
+                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Select Lot (Optional)</label>
+                                <SearchableSelect
+                                  options={[
+                                    { value: '', label: '-- All Lots (Sequential) --' },
+                                    ...availableLots.map(lot => ({
+                                      value: lot.lotNumber,
+                                      label: `${lot.lotNumber} (${lot.pieces?.length || 0} pcs)`
+                                    }))
+                                  ]}
+                                  value={selectedLotNumber}
+                                  onChange={(val) => setSelectedLotNumber(val)}
+                                  placeholder="-- All Lots (Sequential) --"
+                                />
+                              </div>
+                            );
+                          })()}
 
                           {/* PCS / Quantity field */}
                           <div className="space-y-1">
@@ -3790,11 +4170,10 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                           <span className={`text-[8px] font-black uppercase tracking-wider px-1 py-0.2 rounded ${isSelected ? 'bg-slate-800 text-slate-300' : 'bg-slate-200 text-slate-600'}`}>
                                             {fromMeters(matchRoll.fullLength).toFixed(1)}{currentUnit}x{fromMeters(matchRoll.fullWidth).toFixed(1)}{currentUnit}
                                           </span>
-                                          <span className={`text-[7.5px] font-black uppercase tracking-wider px-1 py-0.2 rounded ${
-                                            isRollReuse(matchRoll)
+                                          <span className={`text-[7.5px] font-black uppercase tracking-wider px-1 py-0.2 rounded ${isRollReuse(matchRoll)
                                               ? (isSelected ? 'bg-amber-900 text-amber-200' : 'bg-amber-50 text-amber-700')
                                               : (isSelected ? 'bg-blue-900 text-blue-200' : 'bg-blue-50 text-blue-700')
-                                          }`}>
+                                            }`}>
                                             {isRollReuse(matchRoll) ? 'Remnant' : 'Fresh'}
                                           </span>
                                         </>
@@ -3837,10 +4216,13 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                   <label className="text-[8.5px] font-black text-slate-500 uppercase tracking-widest">
                                     Target Roll
                                   </label>
-                                  <select
+                                  <SearchableSelect
+                                    options={visibleRolls.map(r => ({
+                                      value: r.id,
+                                      label: `Roll ${r.id} (${fromMeters(r.fullLength).toFixed(1)}${currentUnit} × ${fromMeters(r.fullWidth).toFixed(1)}${currentUnit})`
+                                    }))}
                                     value={manualPlacement?.rollId || (visibleRolls[0]?.id || '')}
-                                    onChange={(e) => {
-                                      const rId = e.target.value;
+                                    onChange={(rId) => {
                                       const roll = rolls.find(r => r.id === rId);
                                       if (roll) {
                                         setManualPlacement({
@@ -3849,14 +4231,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                         });
                                       }
                                     }}
-                                    className="w-full px-2 py-1 border border-slate-200 rounded-lg font-bold text-xs bg-white cursor-pointer"
-                                  >
-                                    {visibleRolls.map(r => (
-                                      <option key={r.id} value={r.id}>
-                                        Roll {r.id} ({fromMeters(r.fullLength).toFixed(1)}{currentUnit} × {fromMeters(r.fullWidth).toFixed(1)}{currentUnit})
-                                      </option>
-                                    ))}
-                                  </select>
+                                  />
                                 </div>
 
                                 {/* X and Y Coordinates Input */}
@@ -4142,16 +4517,16 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
           {activeTab === 'stock' && (
             <div className="space-y-5">
 
-              {/* ── TOP: Five summary selector tiles ── */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+              {/* ── TOP: Six summary selector tiles ── */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
 
                 {/* Tile 1 – Material Stocks */}
                 <button
                   type="button"
                   onClick={() => setActiveInventoryCard(activeInventoryCard === 'materials' ? null : 'materials')}
                   className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-4 shadow-sm hover:shadow-md ${activeInventoryCard === 'materials'
-                      ? 'bg-zinc-950 border-zinc-950 text-white shadow-lg'
-                      : 'bg-white border-zinc-200 text-slate-800 hover:border-zinc-400'
+                    ? 'bg-zinc-950 border-zinc-950 text-white shadow-lg'
+                    : 'bg-white border-zinc-200 text-slate-800 hover:border-zinc-400'
                     }`}
                 >
                   <div className={`p-2.5 rounded-xl shrink-0 ${activeInventoryCard === 'materials' ? 'bg-white/10' : 'bg-zinc-100'
@@ -4175,8 +4550,8 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                   type="button"
                   onClick={() => setActiveInventoryCard(activeInventoryCard === 'remnants' ? null : 'remnants')}
                   className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-4 shadow-sm hover:shadow-md ${activeInventoryCard === 'remnants'
-                      ? 'bg-emerald-600 border-emerald-600 text-white shadow-lg'
-                      : 'bg-white border-zinc-200 text-slate-800 hover:border-emerald-400'
+                    ? 'bg-emerald-600 border-emerald-600 text-white shadow-lg'
+                    : 'bg-white border-zinc-200 text-slate-800 hover:border-emerald-400'
                     }`}
                 >
                   <div className={`p-2.5 rounded-xl shrink-0 ${activeInventoryCard === 'remnants' ? 'bg-white/15' : 'bg-emerald-50'
@@ -4200,8 +4575,8 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                   type="button"
                   onClick={() => setActiveInventoryCard(activeInventoryCard === 'fresh' ? null : 'fresh')}
                   className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-4 shadow-sm hover:shadow-md ${activeInventoryCard === 'fresh'
-                      ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg'
-                      : 'bg-white border-zinc-200 text-slate-800 hover:border-indigo-400'
+                    ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg'
+                    : 'bg-white border-zinc-200 text-slate-800 hover:border-indigo-400'
                     }`}
                 >
                   <div className={`p-2.5 rounded-xl shrink-0 ${activeInventoryCard === 'fresh' ? 'bg-white/15' : 'bg-indigo-50'
@@ -4220,6 +4595,31 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                     }`} />
                 </button>
 
+                {/* Tile 3.5 – Ready Belt Stock */}
+                <button
+                  type="button"
+                  onClick={() => setActiveInventoryCard(activeInventoryCard === 'ready_belt' ? null : 'ready_belt')}
+                  className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-4 shadow-sm hover:shadow-md ${activeInventoryCard === 'ready_belt'
+                    ? 'bg-cyan-600 border-cyan-600 text-white shadow-lg'
+                    : 'bg-white border-zinc-200 text-slate-800 hover:border-cyan-400'
+                    }`}
+                >
+                  <div className={`p-2.5 rounded-xl shrink-0 ${activeInventoryCard === 'ready_belt' ? 'bg-white/15' : 'bg-cyan-50'
+                    }`}>
+                    <Layers size={20} className={activeInventoryCard === 'ready_belt' ? 'text-white' : 'text-cyan-600'} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-[9px] font-black uppercase tracking-widest ${activeInventoryCard === 'ready_belt' ? 'text-cyan-100' : 'text-slate-400'
+                      }`}>Ready Belt Stock</p>
+                    <p className={`text-xl font-black leading-none mt-0.5 ${activeInventoryCard === 'ready_belt' ? 'text-white' : 'text-zinc-950'
+                      }`}>{readyBeltStocks.length}</p>
+                    <p className={`text-[9px] font-bold mt-1 ${activeInventoryCard === 'ready_belt' ? 'text-cyan-100' : 'text-slate-400'
+                      }`}>belts tracked</p>
+                  </div>
+                  <ChevronRight size={16} className={`shrink-0 transition-transform duration-200 ${activeInventoryCard === 'ready_belt' ? 'text-white rotate-90' : 'text-slate-300 group-hover:text-cyan-400'
+                    }`} />
+                </button>
+
                 {/* Tile 4 - Reorder Level */}
                 {(() => {
                   const alertCount = materialStocks.filter(s => s.reorderLevel > 0 && s.quantity <= s.reorderLevel).length;
@@ -4232,10 +4632,10 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                       type="button"
                       onClick={() => setActiveInventoryCard(activeInventoryCard === 'reorder' ? null : 'reorder')}
                       className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-4 shadow-sm hover:shadow-md ${activeInventoryCard === 'reorder'
-                          ? 'bg-amber-500 border-amber-500 text-white shadow-lg'
-                          : totalAlerts > 0
-                            ? 'bg-amber-50 border-amber-300 text-slate-800 hover:border-amber-500'
-                            : 'bg-white border-zinc-200 text-slate-800 hover:border-amber-400'
+                        ? 'bg-amber-500 border-amber-500 text-white shadow-lg'
+                        : totalAlerts > 0
+                          ? 'bg-amber-50 border-amber-300 text-slate-800 hover:border-amber-500'
+                          : 'bg-white border-zinc-200 text-slate-800 hover:border-amber-400'
                         }`}
                     >
                       <div className={`p-2.5 rounded-xl shrink-0 ${activeInventoryCard === 'reorder' ? 'bg-white/15' : totalAlerts > 0 ? 'bg-amber-100' : 'bg-amber-50'
@@ -4264,10 +4664,10 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                       type="button"
                       onClick={() => setActiveInventoryCard(activeInventoryCard === 'requests' ? null : 'requests')}
                       className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-4 shadow-sm hover:shadow-md ${activeInventoryCard === 'requests'
-                          ? 'bg-violet-600 border-violet-600 text-white shadow-lg'
-                          : pendingCount > 0
-                            ? 'bg-violet-50 border-violet-300 text-slate-800 hover:border-violet-500'
-                            : 'bg-white border-zinc-200 text-slate-800 hover:border-violet-400'
+                        ? 'bg-violet-600 border-violet-600 text-white shadow-lg'
+                        : pendingCount > 0
+                          ? 'bg-violet-50 border-violet-300 text-slate-800 hover:border-violet-500'
+                          : 'bg-white border-zinc-200 text-slate-800 hover:border-violet-400'
                         }`}
                     >
                       <div className={`p-2.5 rounded-xl shrink-0 ${activeInventoryCard === 'requests' ? 'bg-white/15' : pendingCount > 0 ? 'bg-violet-100' : 'bg-violet-50'
@@ -4327,10 +4727,13 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                           <div className="space-y-1">
                             <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Material Name</label>
                             <div className="flex flex-col gap-1.5">
-                              <select
+                              <SearchableSelect
+                                options={[
+                                  { value: 'custom', label: '-- Type Custom Name --' },
+                                  ...bomComponentNames.map(name => ({ value: name, label: name }))
+                                ]}
                                 value={bomComponentNames.includes(newMaterialStock.name) ? newMaterialStock.name : 'custom'}
-                                onChange={(e) => {
-                                  const val = e.target.value;
+                                onChange={(val) => {
                                   if (val === 'custom') {
                                     setNewMaterialStock({ ...newMaterialStock, name: '' });
                                   } else {
@@ -4360,13 +4763,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                     setNewMaterialStock({ ...newMaterialStock, name: val, unit: defaultUnit });
                                   }
                                 }}
-                                className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-zinc-950"
-                              >
-                                <option value="custom">-- Type Custom Name --</option>
-                                {bomComponentNames.map(name => (
-                                  <option key={name} value={name}>{name}</option>
-                                ))}
-                              </select>
+                              />
                               {(!bomComponentNames.includes(newMaterialStock.name) || newMaterialStock.name === '') && (
                                 <input
                                   type="text"
@@ -4379,13 +4776,16 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                             </div>
                           </div>
                           <div className="space-y-1">
-                            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Quantity</label>
+                            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                              Quantity {formLots.length > 0 && <span className="text-emerald-600 font-bold">(Auto-calculated)</span>}
+                            </label>
                             <input
                               type="number"
                               placeholder="0"
                               value={newMaterialStock.quantity}
+                              disabled={formLots.length > 0}
                               onChange={(e) => setNewMaterialStock({ ...newMaterialStock, quantity: e.target.value })}
-                              className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-zinc-950"
+                              className={`w-full px-3 py-2 border border-zinc-200 rounded-lg text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-zinc-950 ${formLots.length > 0 ? 'opacity-70 bg-zinc-50 border-zinc-300 cursor-not-allowed' : ''}`}
                             />
                           </div>
                           <div className="space-y-1">
@@ -4399,6 +4799,120 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                             />
                           </div>
                         </div>
+
+                        {/* Lots & Weights Section */}
+                        <div className="border-t border-slate-200/60 pt-4 mt-2">
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-1">
+                              <Layers size={14} className="text-zinc-600" /> Lots & Piece Weights (Optional)
+                            </h4>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFormLots([...formLots, { lotNumber: `Lot ${formLots.length + 1}`, pieces: [] }]);
+                              }}
+                              className="px-2.5 py-1 bg-zinc-950 text-white hover:bg-zinc-800 rounded text-[9px] font-black uppercase flex items-center gap-1 cursor-pointer transition active:scale-95 shadow-sm"
+                            >
+                              <Plus size={11} /> Add Lot
+                            </button>
+                          </div>
+
+                          {formLots.length === 0 ? (
+                            <p className="text-[10px] text-slate-400 italic">No lots added. Quantity will be entered manually.</p>
+                          ) : (
+                            <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                              {formLots.map((lot, lIdx) => (
+                                <div key={lIdx} className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+                                  <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Lot No</span>
+                                      <input
+                                        type="text"
+                                        value={lot.lotNumber}
+                                        onChange={(e) => {
+                                          const updated = [...formLots];
+                                          updated[lIdx].lotNumber = e.target.value;
+                                          setFormLots(updated);
+                                        }}
+                                        className="px-2 py-0.5 border border-slate-200 rounded font-bold text-xs bg-slate-50 w-36"
+                                      />
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updated = [...formLots];
+                                          const nextNo = lot.pieces.length + 1;
+                                          updated[lIdx].pieces.push({ pieceNo: nextNo, weight: 0 });
+                                          setFormLots(updated);
+                                        }}
+                                        className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-[9.5px] font-black uppercase cursor-pointer transition active:scale-95"
+                                      >
+                                        + Add Piece
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updated = formLots.filter((_, i) => i !== lIdx);
+                                          setFormLots(updated);
+                                        }}
+                                        className="p-1 hover:bg-red-50 text-red-500 rounded cursor-pointer transition"
+                                        title="Delete Lot"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {lot.pieces.length === 0 ? (
+                                    <p className="text-[10px] text-slate-400 italic pl-1">No pieces in this lot yet.</p>
+                                  ) : (
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-1">
+                                      {lot.pieces.map((piece, pIdx) => (
+                                        <div key={pIdx} className="flex items-center border border-slate-100 rounded-xl p-2 bg-slate-50/50 justify-between gap-1">
+                                          <div className="flex flex-col">
+                                            <span className="text-[7.5px] font-black text-slate-400 uppercase">Piece #{piece.pieceNo}</span>
+                                            <div className="flex items-center gap-1 mt-0.5">
+                                              <input
+                                                type="number"
+                                                step="0.001"
+                                                placeholder="Weight"
+                                                value={piece.weight || ''}
+                                                onChange={(e) => {
+                                                  const updated = [...formLots];
+                                                  updated[lIdx].pieces[pIdx].weight = parseFloat(e.target.value) || 0;
+                                                  setFormLots(updated);
+                                                }}
+                                                className="w-16 px-1.5 py-0.5 border border-slate-200 rounded font-mono font-bold text-[10px] text-center bg-white"
+                                              />
+                                              <span className="text-[8px] font-bold text-slate-400 font-mono">kg</span>
+                                            </div>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const updated = [...formLots];
+                                              updated[lIdx].pieces = lot.pieces.filter((_, i) => i !== pIdx);
+                                              updated[lIdx].pieces.forEach((p, idx) => {
+                                                p.pieceNo = idx + 1;
+                                              });
+                                              setFormLots(updated);
+                                            }}
+                                            className="p-1 hover:bg-red-50 text-red-400 hover:text-red-600 rounded cursor-pointer transition"
+                                            title="Remove Piece"
+                                          >
+                                            <X size={12} />
+                                          </button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
                         <button
                           onClick={handleAddMaterialStock}
                           className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black text-xs uppercase tracking-wider transition cursor-pointer"
@@ -4434,70 +4948,126 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                         <tbody className="divide-y divide-zinc-150">
                           {filteredMaterialStocksList.map((item) => {
                             const isEditing = editingMaterialStock?.id === item.id;
+                            const isExpanded = expandedStockIds.includes(item.id) || isEditing;
                             return (
-                              <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
-                                {isEditing ? (
-                                  <>
-                                    <td className="px-4 py-3">
-                                      <input
-                                        type="text"
-                                        value={editingMaterialStock.name}
-                                        onChange={(e) => setEditingMaterialStock({ ...editingMaterialStock, name: e.target.value })}
-                                        className="w-full px-3 py-2 border border-zinc-300 rounded-lg text-xs font-bold bg-white"
-                                      />
-                                    </td>
-                                    <td className="px-4 py-3" colSpan={2}>
-                                      <div className="flex gap-2">
-                                        <input
-                                          type="number"
-                                          value={editingMaterialStock.quantity}
-                                          onChange={(e) => setEditingMaterialStock({ ...editingMaterialStock, quantity: parseFloat(e.target.value) || 0 })}
-                                          className="w-24 px-3 py-2 border border-zinc-300 rounded-lg text-xs font-bold text-center bg-white"
-                                        />
+                              <React.Fragment key={item.id}>
+                                <tr className="hover:bg-slate-50/50 transition-colors">
+                                  {isEditing ? (
+                                    <>
+                                      <td className="px-4 py-3">
                                         <input
                                           type="text"
-                                          value={editingMaterialStock.unit}
-                                          onChange={(e) => setEditingMaterialStock({ ...editingMaterialStock, unit: e.target.value })}
-                                          className="w-24 px-3 py-2 border border-zinc-300 rounded-lg text-xs font-bold text-center bg-white"
+                                          value={editingMaterialStock.name}
+                                          onChange={(e) => setEditingMaterialStock({ ...editingMaterialStock, name: e.target.value })}
+                                          className="w-full px-3 py-2 border border-zinc-300 rounded-lg text-xs font-bold bg-white"
                                         />
-                                      </div>
-                                    </td>
-                                    <td className="px-4 py-3 text-right">
-                                      <div className="flex gap-1.5 justify-end">
-                                        <button
-                                          onClick={handleUpdateMaterialStock}
-                                          className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-black uppercase flex items-center justify-center gap-1 cursor-pointer"
-                                          title="Save"
-                                        >
-                                          <Check size={13} /> Save
-                                        </button>
-                                        <button
-                                          onClick={() => setEditingMaterialStock(null)}
-                                          className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-[10px] font-black uppercase cursor-pointer"
-                                          title="Cancel"
-                                        >
-                                          Cancel
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </>
-                                ) : (
-                                  <>
-                                    <td className="px-4 py-3 font-black text-sm text-slate-800">{item.name}</td>
-                                    <td className="px-4 py-3">
-                                      <span className="text-[11px] font-black text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-lg">
-                                        {item.quantity} {item.unit}
-                                      </span>
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      <div className="flex items-center gap-1.5">
-                                        <input
-                                          type="number"
-                                          placeholder="+ Qty"
-                                          id={`refill-qty-${item.id}`}
-                                          className="w-16 px-2.5 py-1.5 border border-zinc-200 rounded-lg text-xs font-bold bg-white text-center focus:outline-none focus:ring-2 focus:ring-zinc-950"
-                                          onKeyDown={async (e) => {
-                                            if (e.key === 'Enter') {
+                                      </td>
+                                      <td className="px-4 py-3" colSpan={2}>
+                                        <div className="flex gap-2">
+                                          <input
+                                            type="number"
+                                            value={editingMaterialStock.quantity}
+                                            disabled={formLots.length > 0}
+                                            onChange={(e) => setEditingMaterialStock({ ...editingMaterialStock, quantity: parseFloat(e.target.value) || 0 })}
+                                            className={`w-24 px-3 py-2 border border-zinc-300 rounded-lg text-xs font-bold text-center bg-white ${formLots.length > 0 ? 'opacity-70 bg-zinc-50 border-zinc-200 cursor-not-allowed' : ''}`}
+                                          />
+                                          <input
+                                            type="text"
+                                            value={editingMaterialStock.unit}
+                                            onChange={(e) => setEditingMaterialStock({ ...editingMaterialStock, unit: e.target.value })}
+                                            className="w-24 px-3 py-2 border border-zinc-300 rounded-lg text-xs font-bold text-center bg-white"
+                                          />
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3 text-right">
+                                        <div className="flex gap-1.5 justify-end">
+                                          <button
+                                            onClick={handleUpdateMaterialStock}
+                                            className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-black uppercase flex items-center justify-center gap-1 cursor-pointer"
+                                            title="Save"
+                                          >
+                                            <Check size={13} /> Save
+                                          </button>
+                                          <button
+                                            onClick={() => setEditingMaterialStock(null)}
+                                            className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-[10px] font-black uppercase cursor-pointer"
+                                            title="Cancel"
+                                          >
+                                            Cancel
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <td className="px-4 py-3 font-black text-sm text-slate-800">
+                                        <div className="flex items-center gap-2">
+                                          <button
+                                            onClick={() => {
+                                              const exp = expandedStockIds.includes(item.id);
+                                              if (exp) {
+                                                setExpandedStockIds(expandedStockIds.filter(id => id !== item.id));
+                                              } else {
+                                                setExpandedStockIds([...expandedStockIds, item.id]);
+                                              }
+                                            }}
+                                            className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-800 transition cursor-pointer"
+                                            title={expandedStockIds.includes(item.id) ? "Collapse Details" : "Expand Details"}
+                                          >
+                                            <ChevronRight
+                                              size={15}
+                                              className={`transition-transform duration-200 ${expandedStockIds.includes(item.id) ? 'rotate-90' : ''}`}
+                                            />
+                                          </button>
+                                          <span>{item.name}</span>
+                                          {item.lots && item.lots.length > 0 && (
+                                            <span className="text-[8px] font-black text-indigo-600 bg-indigo-50 border border-indigo-150 px-1.5 py-0.5 rounded-md uppercase tracking-wider">
+                                              {item.lots.length} Lots
+                                            </span>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <span className="text-[11px] font-black text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-lg">
+                                          {item.quantity} {item.unit}
+                                        </span>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <div className="flex items-center gap-1.5">
+                                          <input
+                                            type="number"
+                                            placeholder="+ Qty"
+                                            id={`refill-qty-${item.id}`}
+                                            className="w-16 px-2.5 py-1.5 border border-zinc-200 rounded-lg text-xs font-bold bg-white text-center focus:outline-none focus:ring-2 focus:ring-zinc-950"
+                                            onKeyDown={async (e) => {
+                                              if (e.key === 'Enter') {
+                                                const inputEl = document.getElementById(`refill-qty-${item.id}`) as HTMLInputElement;
+                                                const val = parseFloat(inputEl?.value || '');
+                                                if (val > 0) {
+                                                  if (window.confirm(`Are you sure you want to refill ${item.name} by ${val} ${item.unit}?`)) {
+                                                    try {
+                                                      const res = await fetch(`/api/material-stocks/${item.id}/refill`, {
+                                                        method: 'PATCH',
+                                                        headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify({ addQuantity: val })
+                                                      });
+                                                      if (res.ok) {
+                                                        toast.success(`Refilled ${val} ${item.unit} to ${item.name}!`);
+                                                        inputEl.value = '';
+                                                        loadMaterialStocksData();
+                                                      } else {
+                                                        toast.error("Failed to refill stock");
+                                                      }
+                                                    } catch (err) {
+                                                      toast.error("Failed to refill stock");
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }}
+                                          />
+                                          <button
+                                            onClick={async () => {
                                               const inputEl = document.getElementById(`refill-qty-${item.id}`) as HTMLInputElement;
                                               const val = parseFloat(inputEl?.value || '');
                                               if (val > 0) {
@@ -4519,64 +5089,210 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                                     toast.error("Failed to refill stock");
                                                   }
                                                 }
+                                              } else {
+                                                toast.error("Enter a valid quantity to refill");
                                               }
-                                            }
-                                          }}
-                                        />
-                                        <button
-                                          onClick={async () => {
-                                            const inputEl = document.getElementById(`refill-qty-${item.id}`) as HTMLInputElement;
-                                            const val = parseFloat(inputEl?.value || '');
-                                            if (val > 0) {
-                                              if (window.confirm(`Are you sure you want to refill ${item.name} by ${val} ${item.unit}?`)) {
-                                                try {
-                                                  const res = await fetch(`/api/material-stocks/${item.id}/refill`, {
-                                                    method: 'PATCH',
-                                                    headers: { 'Content-Type': 'application/json' },
-                                                    body: JSON.stringify({ addQuantity: val })
-                                                  });
-                                                  if (res.ok) {
-                                                    toast.success(`Refilled ${val} ${item.unit} to ${item.name}!`);
-                                                    inputEl.value = '';
-                                                    loadMaterialStocksData();
-                                                  } else {
-                                                    toast.error("Failed to refill stock");
-                                                  }
-                                                } catch (err) {
-                                                  toast.error("Failed to refill stock");
-                                                }
-                                              }
-                                            } else {
-                                              toast.error("Enter a valid quantity to refill");
-                                            }
-                                          }}
-                                          className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-[10px] font-bold uppercase transition"
-                                        >
-                                          Refill
-                                        </button>
-                                      </div>
+                                            }}
+                                            className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-[10px] font-bold uppercase transition"
+                                          >
+                                            Refill
+                                          </button>
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3 text-right">
+                                        <div className="flex gap-2 justify-end items-center">
+                                          <button
+                                            onClick={() => setEditingMaterialStock(item)}
+                                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
+                                            title="Edit"
+                                          >
+                                            <Edit2 size={14} />
+                                          </button>
+                                          <button
+                                            onClick={() => handleDeleteMaterialStock(item.id, item.name)}
+                                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                                            title="Delete"
+                                          >
+                                            <Trash2 size={14} />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </>
+                                  )}
+                                </tr>
+                                {isExpanded && (
+                                  <tr className="bg-slate-50/40">
+                                    <td colSpan={4} className="px-6 py-4 border-b border-zinc-200">
+                                      {isEditing ? (
+                                        <div className="space-y-3 bg-blue-50/20 p-4 rounded-2xl border border-blue-150">
+                                          <div className="flex items-center justify-between">
+                                            <span className="text-[11px] font-black text-blue-800 uppercase tracking-widest flex items-center gap-1.5">
+                                              <Layers size={14} /> Edit Lots & Weights (Quantity will auto-update)
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setFormLots([...formLots, { lotNumber: `Lot ${formLots.length + 1}`, pieces: [] }]);
+                                              }}
+                                              className="px-2.5 py-1 bg-zinc-950 text-white hover:bg-zinc-800 rounded text-[9px] font-black uppercase flex items-center gap-1 cursor-pointer transition active:scale-95 shadow-sm"
+                                            >
+                                              <Plus size={11} /> Add Lot
+                                            </button>
+                                          </div>
+                                          {formLots.length === 0 ? (
+                                            <p className="text-[10px] text-slate-400 italic">No lots added. Quantity can be entered manually above.</p>
+                                          ) : (
+                                            <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                                              {formLots.map((lot, lIdx) => (
+                                                <div key={lIdx} className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+                                                  <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Lot No</span>
+                                                      <input
+                                                        type="text"
+                                                        value={lot.lotNumber}
+                                                        onChange={(e) => {
+                                                          const updated = [...formLots];
+                                                          updated[lIdx].lotNumber = e.target.value;
+                                                          setFormLots(updated);
+                                                        }}
+                                                        className="px-2 py-0.5 border border-slate-200 rounded font-bold text-xs bg-slate-50 w-36"
+                                                      />
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                          const updated = [...formLots];
+                                                          const nextNo = lot.pieces.length + 1;
+                                                          updated[lIdx].pieces.push({ pieceNo: nextNo, weight: 0 });
+                                                          setFormLots(updated);
+                                                        }}
+                                                        className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-[9.5px] font-black uppercase cursor-pointer transition active:scale-95"
+                                                      >
+                                                        + Add Piece
+                                                      </button>
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                          const updated = formLots.filter((_, i) => i !== lIdx);
+                                                          setFormLots(updated);
+                                                        }}
+                                                        className="p-1 hover:bg-red-50 text-red-500 rounded cursor-pointer transition"
+                                                        title="Delete Lot"
+                                                      >
+                                                        <Trash2 size={13} />
+                                                      </button>
+                                                    </div>
+                                                  </div>
+
+                                                  {lot.pieces.length === 0 ? (
+                                                    <p className="text-[10px] text-slate-400 italic pl-1">No pieces in this lot yet.</p>
+                                                  ) : (
+                                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-1">
+                                                      {lot.pieces.map((piece, pIdx) => (
+                                                        <div key={pIdx} className="flex items-center border border-slate-100 rounded-xl p-2 bg-slate-50/50 justify-between gap-1">
+                                                          <div className="flex flex-col">
+                                                            <span className="text-[7.5px] font-black text-slate-400 uppercase">Piece #{piece.pieceNo}</span>
+                                                            <div className="flex items-center gap-1 mt-0.5">
+                                                              <input
+                                                                type="number"
+                                                                step="0.001"
+                                                                placeholder="Weight"
+                                                                value={piece.weight || ''}
+                                                                onChange={(e) => {
+                                                                  const updated = [...formLots];
+                                                                  updated[lIdx].pieces[pIdx].weight = parseFloat(e.target.value) || 0;
+                                                                  setFormLots(updated);
+                                                                }}
+                                                                className="w-16 px-1.5 py-0.5 border border-slate-200 rounded font-mono font-bold text-[10px] text-center bg-white"
+                                                              />
+                                                              <span className="text-[8px] font-bold text-slate-400 font-mono">kg</span>
+                                                            </div>
+                                                          </div>
+                                                          <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                              const updated = [...formLots];
+                                                              updated[lIdx].pieces = lot.pieces.filter((_, i) => i !== pIdx);
+                                                              updated[lIdx].pieces.forEach((p, idx) => {
+                                                                p.pieceNo = idx + 1;
+                                                              });
+                                                              setFormLots(updated);
+                                                            }}
+                                                            className="p-1 hover:bg-red-50 text-red-400 hover:text-red-600 rounded cursor-pointer transition"
+                                                            title="Remove Piece"
+                                                          >
+                                                            <X size={12} />
+                                                          </button>
+                                                        </div>
+                                                      ))}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-150 space-y-3">
+                                          <div className="flex items-center justify-between">
+                                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                                              <Layers size={12} /> Lots & Pieces Details ({item.lots?.length || 0} Lots)
+                                            </span>
+                                            <button
+                                              onClick={() => {
+                                                setExpandedStockIds(expandedStockIds.filter(id => id !== item.id));
+                                              }}
+                                              className="text-[9px] font-black text-slate-400 hover:text-slate-600 uppercase cursor-pointer"
+                                            >
+                                              Close Details
+                                            </button>
+                                          </div>
+
+                                          {(!item.lots || item.lots.length === 0) ? (
+                                            <p className="text-[10.5px] text-slate-400 font-semibold italic">No detailed lots tracked for this material. Click edit to add lots.</p>
+                                          ) : (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                              {item.lots.map((lot: any, lotIdx: number) => {
+                                                const totalWeight = lot.pieces?.reduce((sum: number, p: any) => sum + (p.weight || 0), 0) || 0;
+                                                return (
+                                                  <div key={lotIdx} className="bg-white rounded-xl border border-slate-200 shadow-sm p-3 space-y-2">
+                                                    <div className="flex justify-between items-center border-b border-slate-100 pb-1.5">
+                                                      <span className="font-black text-xs text-slate-800 uppercase tracking-tight">{lot.lotNumber}</span>
+                                                      <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-md uppercase">
+                                                        {lot.pieces?.length || 0} Pieces {totalWeight > 0 && `(Total: ${totalWeight.toFixed(3)} kg)`}
+                                                      </span>
+                                                    </div>
+                                                    <div className="overflow-x-auto">
+                                                      <table className="w-full text-left text-[10px] border-collapse">
+                                                        <thead>
+                                                          <tr className="text-slate-400 font-bold uppercase tracking-widest border-b border-slate-100">
+                                                            <th className="py-1">No.</th>
+                                                            <th className="py-1 text-right">Weight (kg)</th>
+                                                          </tr>
+                                                        </thead>
+                                                        <tbody className="divide-y divide-slate-50 font-mono font-bold text-slate-600">
+                                                          {lot.pieces?.map((piece: any, pIdx: number) => (
+                                                            <tr key={pIdx} className="hover:bg-slate-50/50">
+                                                              <td className="py-1">{piece.pieceNo}</td>
+                                                              <td className="py-1 text-right">{piece.weight > 0 ? piece.weight.toFixed(3) : '-'}</td>
+                                                            </tr>
+                                                          ))}
+                                                        </tbody>
+                                                      </table>
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
                                     </td>
-                                    <td className="px-4 py-3 text-right">
-                                      <div className="flex gap-2 justify-end items-center">
-                                        <button
-                                          onClick={() => setEditingMaterialStock(item)}
-                                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
-                                          title="Edit"
-                                        >
-                                          <Edit2 size={14} />
-                                        </button>
-                                        <button
-                                          onClick={() => handleDeleteMaterialStock(item.id, item.name)}
-                                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
-                                          title="Delete"
-                                        >
-                                          <Trash2 size={14} />
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </>
+                                  </tr>
                                 )}
-                              </tr>
+                              </React.Fragment>
                             );
                           })}
 
@@ -4589,6 +5305,319 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                           )}
                         </tbody>
                       </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* CARD 1.5: Ready Belt Stock */}
+                {activeInventoryCard === 'ready_belt' && (
+                  <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm p-5 animate-in fade-in duration-300 flex flex-col w-full">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                        <div className="p-1.5 rounded-lg bg-cyan-50 shrink-0">
+                          <Layers size={16} className="text-cyan-600" />
+                        </div>
+                        Ready Belt Stock
+                        <span className="text-[10px] font-black text-cyan-600 bg-cyan-50 border border-cyan-155 px-2.5 py-0.5 rounded-full ml-1.5">
+                          {filteredReadyBeltStocksList.length} items
+                        </span>
+                      </h3>
+                      <button
+                        onClick={() => {
+                          setEditingReadyBeltStock(null);
+                          setShowAddReadyBeltForm(!showAddReadyBeltForm);
+                        }}
+                        className="px-3 py-1.5 bg-zinc-950 text-white rounded-lg font-black text-[10px] hover:bg-zinc-800 transition flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus size={12} /> {showAddReadyBeltForm ? 'CANCEL' : 'ADD NEW'}
+                      </button>
+                    </div>
+
+                    {showAddReadyBeltForm && (
+                      <div className="mb-4 p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3 animate-in fade-in slide-in-from-top-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                            <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Category</label>
+                            <SearchableSelect
+                              options={[
+                                { value: 'BROWN BELT', label: 'BROWN BELT' },
+                                { value: 'BLACK BELT', label: 'BLACK BELT' }
+                              ]}
+                              value={newReadyBeltStock.category}
+                              onChange={(val) => setNewReadyBeltStock({ ...newReadyBeltStock, category: val })}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Belt Stock Name</label>
+                            <SearchableSelect
+                              options={[
+                                { value: 'custom', label: '-- Custom Name --' },
+                                { value: 'SIALI BELT', label: 'SIALI BELT' },
+                                { value: 'WITHOUT SILAI', label: 'WITHOUT SILAI' },
+                                { value: 'CROSS JOINT', label: 'CROSS JOINT' },
+                                { value: 'SILAI BELT', label: 'SILAI BELT' }
+                              ]}
+                              value={['SIALI BELT', 'WITHOUT SILAI', 'CROSS JOINT', 'SILAI BELT'].includes(newReadyBeltStock.beltStock) ? newReadyBeltStock.beltStock : 'custom'}
+                              onChange={(val) => {
+                                if (val === 'custom') {
+                                  setNewReadyBeltStock({ ...newReadyBeltStock, beltStock: '' });
+                                } else {
+                                  setNewReadyBeltStock({ ...newReadyBeltStock, beltStock: val });
+                                }
+                              }}
+                            />
+                            {(!['SIALI BELT', 'WITHOUT SILAI', 'CROSS JOINT', 'SILAI BELT'].includes(newReadyBeltStock.beltStock) || newReadyBeltStock.beltStock === '') && (
+                              <input
+                                type="text"
+                                placeholder="Type Custom Belt name..."
+                                value={newReadyBeltStock.beltStock}
+                                onChange={(e) => setNewReadyBeltStock({ ...newReadyBeltStock, beltStock: e.target.value })}
+                                className="w-full mt-1.5 px-3 py-2 border border-zinc-200 rounded-lg text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-zinc-950"
+                              />
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Size</label>
+                            <input
+                              type="text"
+                              placeholder='e.g. 97" X 63" or 2.20M X 63"'
+                              value={newReadyBeltStock.size}
+                              onChange={(e) => setNewReadyBeltStock({ ...newReadyBeltStock, size: e.target.value })}
+                              className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-zinc-950"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Opening Pieces</label>
+                            <input
+                              type="number"
+                              placeholder="0"
+                              value={newReadyBeltStock.openingPisc}
+                              onChange={(e) => setNewReadyBeltStock({ ...newReadyBeltStock, openingPisc: e.target.value })}
+                              className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-zinc-950"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={handleAddReadyBeltStock}
+                          className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black text-xs uppercase tracking-wider transition cursor-pointer"
+                        >
+                          SAVE READY BELT STOCK
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Searcher & Date Picker */}
+                    <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3.5 top-3 h-4 w-4 text-zinc-400" />
+                        <input
+                          type="text"
+                          placeholder="Search Ready Belt Stocks by name, category, size, SO or receiver..."
+                          value={readyBeltSearchQuery}
+                          onChange={(e) => setReadyBeltSearchQuery(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-zinc-950 placeholder-zinc-400 shadow-sm text-left"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 bg-slate-50 border border-zinc-200 rounded-xl px-3 py-1.5 shadow-sm">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider whitespace-nowrap">Filter by Date</label>
+                        <input
+                          type="date"
+                          value={readyBeltDateFilter}
+                          onChange={(e) => setReadyBeltDateFilter(e.target.value)}
+                          className="border-none bg-transparent text-xs font-bold text-zinc-950 focus:outline-none cursor-pointer"
+                        />
+                        {readyBeltDateFilter && (
+                          <button
+                            onClick={() => setReadyBeltDateFilter('')}
+                            className="text-xs font-bold text-slate-400 hover:text-slate-650 px-1 cursor-pointer"
+                            title="Clear Date Filter"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Grouped Table */}
+                    <div className="space-y-6">
+                      {Object.keys(readyBeltGroups).map((catName) => (
+                        <div key={catName} className="space-y-2">
+                          {/* Group Title - Cyan styled header */}
+                          <div className="bg-cyan-50/50 border-l-4 border-cyan-500 px-4 py-2 rounded-r-xl flex justify-between items-center">
+                            <span className="text-xs font-black text-cyan-900 tracking-wider uppercase font-Outfit">{catName}</span>
+                            <span className="text-[10px] font-black text-cyan-600 bg-cyan-100/50 border border-cyan-200 px-2 py-0.5 rounded-lg">
+                              {readyBeltGroups[catName].length} items
+                            </span>
+                          </div>
+
+                          <div className="overflow-x-auto border border-zinc-200 rounded-2xl shadow-sm bg-white">
+                            <table className="w-full text-left text-xs border-collapse">
+                              <thead className="bg-slate-50 border-b border-zinc-200">
+                                <tr>
+                                  <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest w-12">Sr.No</th>
+                                  <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Belt Stock</th>
+                                  <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Size</th>
+                                  {readyBeltDateFilter ? (
+                                    <>
+                                      <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Received</th>
+                                      <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Issued</th>
+                                      <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Closing Pcs</th>
+                                    </>
+                                  ) : (
+                                    <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Opening Pcs</th>
+                                  )}
+                                  <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right w-64">Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-zinc-150">
+                                {readyBeltGroups[catName].map((item, idx) => {
+                                  const isEditing = editingReadyBeltStock?.id === item.id;
+                                  return (
+                                    <React.Fragment key={item.id}>
+                                      <tr className="hover:bg-slate-50/50 transition-colors">
+                                        {isEditing ? (
+                                          <>
+                                            <td className="px-4 py-3 font-bold text-slate-400">{idx + 1}</td>
+                                            <td className="px-4 py-3">
+                                              <input
+                                                type="text"
+                                                value={editingReadyBeltStock.beltStock}
+                                                onChange={(e) => setEditingReadyBeltStock({ ...editingReadyBeltStock, beltStock: e.target.value })}
+                                                className="w-full px-2 py-1 border border-zinc-300 rounded text-xs font-bold"
+                                              />
+                                            </td>
+                                            <td className="px-4 py-3">
+                                              <input
+                                                type="text"
+                                                value={editingReadyBeltStock.size}
+                                                onChange={(e) => setEditingReadyBeltStock({ ...editingReadyBeltStock, size: e.target.value })}
+                                                className="w-full px-2 py-1 border border-zinc-300 rounded text-xs font-bold"
+                                              />
+                                            </td>
+                                            <td className="px-4 py-3 text-center">
+                                              <input
+                                                type="number"
+                                                value={editingReadyBeltStock.openingPisc}
+                                                onChange={(e) => setEditingReadyBeltStock({ ...editingReadyBeltStock, openingPisc: parseInt(e.target.value, 10) || 0 })}
+                                                disabled={user?.role !== 'admin'}
+                                                title={user?.role !== 'admin' ? "Only admin can edit opening stock directly" : ""}
+                                                className={`w-16 px-1 py-0.5 border border-zinc-300 rounded text-xs font-bold text-center ${user?.role !== 'admin' ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : 'bg-white'}`}
+                                              />
+                                            </td>
+                                            <td className="px-4 py-3 text-right">
+                                              <div className="flex gap-1 justify-end">
+                                                <button
+                                                  onClick={handleUpdateReadyBeltStock}
+                                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-black uppercase flex items-center gap-0.5 cursor-pointer"
+                                                  title="Save"
+                                                >
+                                                  <Check size={11} /> Save
+                                                </button>
+                                                <button
+                                                  onClick={() => setEditingReadyBeltStock(null)}
+                                                  className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-[10px] font-black uppercase cursor-pointer"
+                                                  title="Cancel"
+                                                >
+                                                  Cancel
+                                                </button>
+                                              </div>
+                                            </td>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <td className="px-4 py-3 font-bold text-slate-400">{idx + 1}</td>
+                                            <td className="px-4 py-3 font-black text-sm text-slate-800">{item.beltStock}</td>
+                                            <td className="px-4 py-3 font-mono font-bold text-slate-650">{item.size}</td>
+                                            {readyBeltDateFilter ? (
+                                              (() => {
+                                                const stats = getStockStatusForDate(item, readyBeltDateFilter);
+                                                return (
+                                                  <>
+                                                    <td className="px-4 py-3 text-center font-bold text-slate-600">
+                                                      {stats.received > 0 ? `+${stats.received}` : '-'}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center font-bold text-amber-600">
+                                                      {stats.issued > 0 ? `-${stats.issued}` : '-'}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center font-black text-cyan-600 bg-cyan-50/50">
+                                                      {stats.closing}
+                                                    </td>
+                                                  </>
+                                                );
+                                              })()
+                                            ) : (
+                                              <td className="px-4 py-3 text-center font-bold text-slate-600">{item.openingPisc}</td>
+                                            )}
+                                            <td className="px-4 py-3 text-right">
+                                              <div className="flex gap-1.5 justify-end items-center">
+                                                <button
+                                                  onClick={() => setSelectedHistoryItem(item)}
+                                                  className="px-2 py-1 bg-cyan-50 hover:bg-cyan-100 text-cyan-700 rounded-lg border border-cyan-200 text-[10px] font-black uppercase flex items-center gap-1 cursor-pointer transition-all"
+                                                  title="Check Details"
+                                                >
+                                                  <Info size={11} /> Details
+                                                </button>
+                                                {!readyBeltDateFilter && (
+                                                  <>
+                                                    <button
+                                                      onClick={() => {
+                                                        setSelectedUpdateItem(item);
+                                                        setUpdateForm({ recvPisc: '' });
+                                                      }}
+                                                      className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg border border-emerald-200 text-[10px] font-black uppercase flex items-center gap-1 cursor-pointer transition-all"
+                                                      title="Update/Receive Stock"
+                                                    >
+                                                      <Plus size={11} /> Update
+                                                    </button>
+                                                    <button
+                                                      onClick={() => {
+                                                        setSelectedIssueItem(item);
+                                                        setIssueForm({ issuesPisc: '', soNo: '', receiverName: '' });
+                                                      }}
+                                                      className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-705 rounded-lg border border-amber-200 text-[10px] font-black uppercase flex items-center gap-1 cursor-pointer transition-all"
+                                                      title="Issue Stock"
+                                                    >
+                                                      <ArrowDownCircle size={11} /> Issue
+                                                    </button>
+                                                    <button
+                                                      onClick={() => {
+                                                        setEditingReadyBeltStock({ ...item });
+                                                        setShowAddReadyBeltForm(false);
+                                                      }}
+                                                      className="p-1 hover:bg-indigo-50 text-indigo-500 rounded-lg transition border border-transparent hover:border-indigo-150 cursor-pointer"
+                                                      title="Edit Item"
+                                                    >
+                                                      <Edit2 size={13} />
+                                                    </button>
+                                                    <button
+                                                      onClick={() => handleDeleteReadyBeltStock(item.id, item.beltStock)}
+                                                      className="p-1 hover:bg-rose-55 text-rose-500 rounded-lg transition border border-transparent hover:border-rose-150 cursor-pointer"
+                                                      title="Delete Item"
+                                                    >
+                                                      <Trash2 size={13} />
+                                                    </button>
+                                                  </>
+                                                )}
+                                              </div>
+                                            </td>
+                                          </>
+                                        )}
+                                      </tr>
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ))}
+
+                      {Object.keys(readyBeltGroups).length === 0 && (
+                        <div className="py-16 text-center text-zinc-400 font-semibold text-xs italic border-2 border-dashed border-zinc-200 rounded-3xl">
+                          No ready belt stock found.
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -4734,23 +5763,16 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                           </div>
                           <div className="space-y-1">
                             <label className="text-[9px] font-black text-slate-500 uppercase tracking-wider">Material Type</label>
-                            <select
+                            <SearchableSelect
+                              options={materialTypes.map(type => ({ value: type, label: type }))}
                               value={newRoll.materialType}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                if (val === '__ADD_NEW__') {
-                                  setPreviousMaterialTypeVal(newRoll.materialType);
-                                  setMaterialTypeAddSource('newRoll');
-                                  setShowAddMaterialModal(true);
-                                } else {
-                                  setNewRoll({ ...newRoll, materialType: val });
-                                }
+                              onChange={(val) => setNewRoll({ ...newRoll, materialType: val })}
+                              onAddNew={() => {
+                                setPreviousMaterialTypeVal(newRoll.materialType);
+                                setMaterialTypeAddSource('newRoll');
+                                setShowAddMaterialModal(true);
                               }}
-                              className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            >
-                              {materialTypes.map(type => <option key={type} value={type}>{type}</option>)}
-                              <option value="__ADD_NEW__" className="text-indigo-600 font-bold bg-indigo-50 font-black">+ Add Custom Material Type...</option>
-                            </select>
+                            />
                           </div>
                           <div className="grid grid-cols-2 gap-2">
                             <div className="space-y-1">
@@ -4879,7 +5901,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                   const lowItems = materialStocks.filter(s => s.reorderLevel > 0 && s.quantity <= s.reorderLevel);
                   const lowFreshRolls = rolls.filter(r => r.status !== 'refused' && !isRollReuse(r) && r.reorderLevel > 0 && r.remainingSqm <= r.reorderLevel);
                   const consumedRemnantRolls = rolls.filter(r => r.status !== 'refused' && isRollReuse(r) && r.remainingSqm <= 0.01);
-                  
+
                   return (
                     <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm p-4 animate-in fade-in duration-300 flex flex-col w-full">
                       <div className="flex justify-between items-center mb-3 border-b border-zinc-100 pb-2">
@@ -4896,33 +5918,30 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                         <button
                           type="button"
                           onClick={() => setReorderSubTab('materials')}
-                          className={`px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
-                            reorderSubTab === 'materials'
+                          className={`px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${reorderSubTab === 'materials'
                               ? 'border-amber-500 text-amber-600'
                               : 'border-transparent text-slate-400 hover:text-slate-600'
-                          }`}
+                            }`}
                         >
                           Material Stocks ({lowItems.length})
                         </button>
                         <button
                           type="button"
                           onClick={() => setReorderSubTab('rolls')}
-                          className={`px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
-                            reorderSubTab === 'rolls'
+                          className={`px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${reorderSubTab === 'rolls'
                               ? 'border-amber-500 text-amber-600'
                               : 'border-transparent text-slate-400 hover:text-slate-600'
-                          }`}
+                            }`}
                         >
                           Fresh Rolls ({lowFreshRolls.length + materialTypeStocks.filter(m => m.isLow).length})
                         </button>
                         <button
                           type="button"
                           onClick={() => setReorderSubTab('remnants')}
-                          className={`px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
-                            reorderSubTab === 'remnants'
+                          className={`px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${reorderSubTab === 'remnants'
                               ? 'border-amber-500 text-amber-600'
                               : 'border-transparent text-slate-400 hover:text-slate-600'
-                          }`}
+                            }`}
                         >
                           Cutting Belt ({consumedRemnantRolls.length})
                         </button>
@@ -4974,13 +5993,12 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                   return (
                                     <tr
                                       key={item.id}
-                                      className={`border-b border-zinc-100 hover:bg-slate-50/50 transition-colors ${
-                                        isOut
+                                      className={`border-b border-zinc-100 hover:bg-slate-50/50 transition-colors ${isOut
                                           ? 'bg-rose-50/30 border-l-2 border-l-rose-500'
                                           : isLow
                                             ? 'bg-amber-50/30 border-l-2 border-l-amber-500'
                                             : ''
-                                      }`}
+                                        }`}
                                     >
                                       <td className="px-3 py-2 font-black text-slate-800">{item.name}</td>
                                       <td className="px-3 py-2 font-bold">
@@ -5001,13 +6019,12 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                           <button
                                             onClick={() => handleSaveReorderLevel(item.id)}
                                             disabled={savingReorderLevel === item.id || currentEdit === undefined}
-                                            className={`p-0.5 rounded text-[10px] font-black transition cursor-pointer ${
-                                              savingReorderLevel === item.id
+                                            className={`p-0.5 rounded text-[10px] font-black transition cursor-pointer ${savingReorderLevel === item.id
                                                 ? 'bg-slate-100 text-slate-300'
                                                 : currentEdit !== undefined
                                                   ? 'bg-amber-500 hover:bg-amber-400 text-white shadow-sm'
                                                   : 'bg-slate-100 text-slate-300 cursor-not-allowed'
-                                            }`}
+                                              }`}
                                             title="Save reorder level"
                                           >
                                             {savingReorderLevel === item.id ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
@@ -5064,13 +6081,12 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                     return (
                                       <tr
                                         key={m.materialType}
-                                        className={`border-b border-zinc-100 hover:bg-slate-50/50 transition-colors ${
-                                          m.totalSqm <= 0
+                                        className={`border-b border-zinc-100 hover:bg-slate-50/50 transition-colors ${m.totalSqm <= 0
                                             ? 'bg-rose-50/30 border-l-2 border-l-rose-500'
                                             : m.isLow
                                               ? 'bg-amber-50/30 border-l-2 border-l-amber-500'
                                               : ''
-                                        }`}
+                                          }`}
                                       >
                                         <td className="px-3 py-2.5 font-black text-slate-800">{m.materialType}</td>
                                         <td className="px-3 py-2.5 font-bold">
@@ -5092,13 +6108,12 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                             <button
                                               onClick={() => handleSaveMaterialTypeReorder(m.materialType)}
                                               disabled={savingMaterialTypeReorder === m.materialType || currentEdit === undefined}
-                                              className={`p-0.5 rounded text-[10px] font-black transition cursor-pointer ${
-                                                savingMaterialTypeReorder === m.materialType
+                                              className={`p-0.5 rounded text-[10px] font-black transition cursor-pointer ${savingMaterialTypeReorder === m.materialType
                                                   ? 'bg-slate-100 text-slate-300'
                                                   : currentEdit !== undefined
                                                     ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm'
                                                     : 'bg-slate-100 text-slate-300 cursor-not-allowed'
-                                              }`}
+                                                }`}
                                               title="Save overall trigger"
                                             >
                                               {savingMaterialTypeReorder === m.materialType ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
@@ -5163,13 +6178,12 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                     return (
                                       <tr
                                         key={r.id}
-                                        className={`border-b border-zinc-100 hover:bg-slate-50/50 transition-colors ${
-                                          isOut
+                                        className={`border-b border-zinc-100 hover:bg-slate-50/50 transition-colors ${isOut
                                             ? 'bg-rose-50/30 border-l-2 border-l-rose-500'
                                             : isLow
                                               ? 'bg-amber-50/30 border-l-2 border-l-amber-500'
                                               : ''
-                                        }`}
+                                          }`}
                                       >
                                         <td className="px-3 py-2.5 font-black text-slate-800">{r.id}</td>
                                         <td className="px-3 py-2.5 font-bold text-slate-600">{r.materialType}</td>
@@ -5193,13 +6207,12 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                             <button
                                               onClick={() => handleSaveRollReorderLevel(r.id)}
                                               disabled={savingRollReorderLevel === r.id || currentEdit === undefined}
-                                              className={`p-0.5 rounded text-[10px] font-black transition cursor-pointer ${
-                                                savingRollReorderLevel === r.id
+                                              className={`p-0.5 rounded text-[10px] font-black transition cursor-pointer ${savingRollReorderLevel === r.id
                                                   ? 'bg-slate-100 text-slate-300'
                                                   : currentEdit !== undefined
                                                     ? 'bg-amber-500 hover:bg-amber-400 text-white shadow-sm'
                                                     : 'bg-slate-100 text-slate-300 cursor-not-allowed'
-                                              }`}
+                                                }`}
                                               title="Save roll reorder level"
                                             >
                                               {savingRollReorderLevel === r.id ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
@@ -5310,22 +6323,20 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                         <button
                           type="button"
                           onClick={() => setRequestsSubTab('pending')}
-                          className={`px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
-                            requestsSubTab === 'pending'
+                          className={`px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${requestsSubTab === 'pending'
                               ? 'border-violet-600 text-violet-600'
                               : 'border-transparent text-slate-400 hover:text-slate-600'
-                          }`}
+                            }`}
                         >
                           Pending Requests ({pendingReqs.length})
                         </button>
                         <button
                           type="button"
                           onClick={() => setRequestsSubTab('history')}
-                          className={`px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
-                            requestsSubTab === 'history'
+                          className={`px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer ${requestsSubTab === 'history'
                               ? 'border-violet-600 text-violet-600'
                               : 'border-transparent text-slate-400 hover:text-slate-600'
-                          }`}
+                            }`}
                         >
                           Request History ({pastReqs.length})
                         </button>
@@ -6137,24 +7148,22 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                       <div
                         key={idx}
                         onClick={() => isSuccessful && setViewingSimulatedCutIndex(idx)}
-                        className={`p-4 rounded-2xl border transition-all duration-200 flex items-start justify-between gap-4 ${
-                          isSuccessful
+                        className={`p-4 rounded-2xl border transition-all duration-200 flex items-start justify-between gap-4 ${isSuccessful
                             ? item.isExecuted
                               ? 'bg-emerald-50/10 border-emerald-200/60 shadow-sm cursor-pointer hover:bg-emerald-50/20 hover:border-emerald-300'
                               : 'bg-white border-zinc-200 shadow-sm cursor-pointer hover:bg-slate-50 hover:border-zinc-450 hover:shadow-md'
                             : 'bg-rose-50/70 border-rose-200 shadow-sm'
-                        }`}
+                          }`}
                         title={isSuccessful ? "Click to view layout placement on roll" : undefined}
                       >
                         <div className="flex items-start gap-3.5">
                           {/* Left Badge */}
-                          <span className={`w-8 h-8 rounded-xl font-black text-xs flex items-center justify-center shrink-0 ${
-                            isSuccessful
+                          <span className={`w-8 h-8 rounded-xl font-black text-xs flex items-center justify-center shrink-0 ${isSuccessful
                               ? item.isExecuted
                                 ? 'bg-emerald-600 text-white shadow-sm'
                                 : 'bg-zinc-950 text-white shadow-sm'
                               : 'bg-rose-600 text-white'
-                          }`}>
+                            }`}>
                             #{item.pieceIndex}
                           </span>
 
@@ -6295,19 +7304,38 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                 <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
                   Select Material <span className="text-rose-500">*</span>
                 </label>
-                <select
+                <SearchableSelect
+                  options={materialStocks.map(stock => ({ value: stock.id, label: stock.name }))}
                   value={requestForm.materialId}
-                  onChange={(e) => setRequestForm({ ...requestForm, materialId: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-zinc-200 rounded-xl text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer"
-                >
-                  <option value="" disabled>-- Choose Material --</option>
-                  {materialStocks.map(stock => (
-                    <option key={stock.id} value={stock.id}>
-                      {stock.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => setRequestForm({ ...requestForm, materialId: val })}
+                  placeholder="-- Choose Material --"
+                />
               </div>
+
+              {(() => {
+                const selectedStock = materialStocks.find(s => s.id === requestForm.materialId);
+                const availableLots = selectedStock?.lots || [];
+                if (availableLots.length === 0) return null;
+                return (
+                  <div className="space-y-1.5 animate-in fade-in duration-200">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                      Select Lot (Optional)
+                    </label>
+                    <SearchableSelect
+                      options={[
+                        { value: '', label: '-- Choose Lot --' },
+                        ...availableLots.map(lot => ({
+                          value: lot.lotNumber,
+                          label: `${lot.lotNumber} (${lot.pieces?.length || 0} pcs)`
+                        }))
+                      ]}
+                      value={requestForm.lotNumber}
+                      onChange={(val) => setRequestForm({ ...requestForm, lotNumber: val })}
+                      placeholder="-- Choose Lot --"
+                    />
+                  </div>
+                );
+              })()}
 
               <div className="space-y-1.5">
                 <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
@@ -6340,11 +7368,10 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
               <button
                 onClick={handleSubmitRequest}
                 disabled={isSubmittingRequest}
-                className={`w-full py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition cursor-pointer ${
-                  isSubmittingRequest
+                className={`w-full py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition cursor-pointer ${isSubmittingRequest
                     ? 'bg-indigo-300 text-white cursor-not-allowed'
                     : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm'
-                }`}
+                  }`}
               >
                 {isSubmittingRequest ? (
                   <><Loader2 size={16} className="animate-spin" /> Submitting Request...</>
@@ -6420,6 +7447,31 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                 />
               </div>
 
+              {(() => {
+                const selectedStock = materialStocks.find(s => s.id === approvingRequest.materialId || s.name === approvingRequest.materialName);
+                const availableLots = selectedStock?.lots || [];
+                if (availableLots.length === 0) return null;
+                return (
+                  <div className="space-y-1.5 animate-in fade-in duration-200">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                      Select Lot
+                    </label>
+                    <SearchableSelect
+                      options={[
+                        { value: '', label: '-- All Lots (Sequential) --' },
+                        ...availableLots.map(lot => ({
+                          value: lot.lotNumber,
+                          label: `${lot.lotNumber} (${lot.pieces?.length || 0} pcs)`
+                        }))
+                      ]}
+                      value={approvalForm.lotNumber}
+                      onChange={(val) => setApprovalForm({ ...approvalForm, lotNumber: val })}
+                      placeholder="-- All Lots (Sequential) --"
+                    />
+                  </div>
+                );
+              })()}
+
               <div className="space-y-1.5">
                 <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
                   Approval Notes (Optional)
@@ -6436,11 +7488,10 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
               <button
                 onClick={handleSubmitApproval}
                 disabled={isSubmittingApproval}
-                className={`w-full py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition cursor-pointer ${
-                  isSubmittingApproval
+                className={`w-full py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition cursor-pointer ${isSubmittingApproval
                     ? 'bg-emerald-300 text-white cursor-not-allowed'
                     : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'
-                }`}
+                  }`}
               >
                 {isSubmittingApproval ? (
                   <><Loader2 size={16} className="animate-spin" /> Approving...</>
@@ -6605,13 +7656,13 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
       {fullscreenRollId && (() => {
         const roll = rolls.find(r => r.id === fullscreenRollId);
         if (!roll) return null;
-        
+
         const isReuse = isRollReuse(roll);
         const cuts = roll.cuts || [];
         const lenVal = fromMeters(roll.fullLength).toFixed(1);
         const widVal = fromMeters(roll.fullWidth).toFixed(1);
         const efficiencyVal = cuts.length > 0 ? (roll.efficiency || 0).toFixed(1) : '0';
-        
+
         // Calculate remaining area
         const totalCutsArea = cuts.reduce((acc, cut) => acc + (cut.length * cut.width), 0);
         const totalRollArea = roll.fullLength * roll.fullWidth;
@@ -6626,11 +7677,10 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
               className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
               onClick={() => setFullscreenRollId(null)}
             />
-            <div className={`relative bg-white rounded-[32px] shadow-2xl w-[96vw] max-w-[1600px] flex flex-col border border-slate-200 animate-in fade-in zoom-in-95 duration-200 text-left transition-all duration-300 ease-in-out ${
-              isLayoutFrozen
+            <div className={`relative bg-white rounded-[32px] shadow-2xl w-[96vw] max-w-[1600px] flex flex-col border border-slate-200 animate-in fade-in zoom-in-95 duration-200 text-left transition-all duration-300 ease-in-out ${isLayoutFrozen
                 ? 'h-[92vh] max-h-[92vh] overflow-hidden'
                 : 'h-auto max-h-[92vh] overflow-y-auto'
-            }`}>
+              }`}>
               {/* Header */}
               <div className="p-6 border-b border-zinc-150 flex items-center justify-between bg-slate-50/50 shrink-0">
                 <div className="flex items-center gap-3">
@@ -6650,15 +7700,14 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{roll.materialType}</p>
                   </div>
                 </div>
-                
+
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => setIsLayoutFrozen(!isLayoutFrozen)}
-                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all duration-300 ease-in-out cursor-pointer flex items-center gap-1.5 shadow-md active:scale-95 shrink-0 uppercase tracking-wider border ${
-                      isLayoutFrozen
+                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all duration-300 ease-in-out cursor-pointer flex items-center gap-1.5 shadow-md active:scale-95 shrink-0 uppercase tracking-wider border ${isLayoutFrozen
                         ? 'bg-indigo-600 hover:bg-indigo-500 text-white border-transparent shadow-indigo-100'
                         : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200 shadow-sm'
-                    }`}
+                      }`}
                   >
                     <span>{isLayoutFrozen ? '📌 Frozen Layout' : '🔓 Freeze Layout'}</span>
                   </button>
@@ -6678,14 +7727,12 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
               </div>
 
               {/* Body Content: Responsive Split Layout */}
-              <div className={`flex-1 flex flex-col lg:flex-row transition-all duration-300 ease-in-out ${
-                isLayoutFrozen ? 'overflow-hidden' : 'overflow-visible h-auto'
-              }`}>
-                
-                {/* Left Column: Visualizer Layout Pane (occupies remaining width) */}
-                <div className={`p-4 md:p-5 flex flex-col bg-slate-50 transition-all duration-300 ease-in-out ${
-                  isLayoutFrozen ? 'flex-1 overflow-hidden h-full' : 'w-full lg:flex-1 overflow-visible h-auto'
+              <div className={`flex-1 flex flex-col lg:flex-row transition-all duration-300 ease-in-out ${isLayoutFrozen ? 'overflow-hidden' : 'overflow-visible h-auto'
                 }`}>
+
+                {/* Left Column: Visualizer Layout Pane (occupies remaining width) */}
+                <div className={`p-4 md:p-5 flex flex-col bg-slate-50 transition-all duration-300 ease-in-out ${isLayoutFrozen ? 'flex-1 overflow-hidden h-full' : 'w-full lg:flex-1 overflow-visible h-auto'
+                  }`}>
                   <RollVisualizer
                     roll={roll}
                     unit={currentUnit}
@@ -6698,15 +7745,13 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                 </div>
 
                 {/* Right Column: Stats & Cuts Allocations Sidebar (fixed width on desktop) */}
-                <div className={`w-full lg:w-96 border-t lg:border-t-0 lg:border-l border-zinc-150 bg-white flex flex-col transition-all duration-300 ease-in-out ${
-                  isLayoutFrozen ? 'overflow-hidden h-full lg:h-[calc(92vh-88px)] lg:sticky lg:top-0' : 'overflow-visible h-auto'
-                }`}>
-                  
-                  {/* Scrollable Sidebar Content */}
-                  <div className={`p-6 space-y-6 transition-all duration-300 ease-in-out ${
-                    isLayoutFrozen ? 'flex-1 overflow-y-auto' : 'overflow-visible h-auto'
+                <div className={`w-full lg:w-96 border-t lg:border-t-0 lg:border-l border-zinc-150 bg-white flex flex-col transition-all duration-300 ease-in-out ${isLayoutFrozen ? 'overflow-hidden h-full lg:h-[calc(92vh-88px)] lg:sticky lg:top-0' : 'overflow-visible h-auto'
                   }`}>
-                    
+
+                  {/* Scrollable Sidebar Content */}
+                  <div className={`p-6 space-y-6 transition-all duration-300 ease-in-out ${isLayoutFrozen ? 'flex-1 overflow-y-auto' : 'overflow-visible h-auto'
+                    }`}>
+
                     {/* Stats Grid */}
                     <div className="space-y-3">
                       <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">Roll Metrics</h4>
@@ -6733,9 +7778,8 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                     {/* Cuts Allocations Details list */}
                     <div className="space-y-3">
                       <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">Cuts Allocations ({cuts.length})</h4>
-                      <div className={`space-y-2.5 transition-all duration-300 ease-in-out ${
-                        isLayoutFrozen ? 'max-h-[350px] overflow-y-auto pr-1' : 'max-h-none overflow-visible'
-                      }`}>
+                      <div className={`space-y-2.5 transition-all duration-300 ease-in-out ${isLayoutFrozen ? 'max-h-[350px] overflow-y-auto pr-1' : 'max-h-none overflow-visible'
+                        }`}>
                         {cuts.map((cut, idx) => {
                           let dateStr = 'N/A';
                           const tsMatch = cut.id.match(/C-(\d+)/);
@@ -6791,6 +7835,265 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
           </div>
         );
       })()}
+      {/* Stock History Details Modal */}
+      {selectedHistoryItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-3xl w-full max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="px-6 py-5 bg-gradient-to-r from-cyan-50 to-blue-50 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-black text-slate-800 uppercase tracking-wider font-Outfit">
+                  Stock History Details
+                </h3>
+                <p className="text-[11px] text-slate-500 font-bold mt-0.5">
+                  {selectedHistoryItem.beltStock} — {selectedHistoryItem.size} ({selectedHistoryItem.category})
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedHistoryItem(null)}
+                className="p-1.5 hover:bg-slate-200/60 text-slate-400 hover:text-slate-600 rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-4">
+              <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <div className="text-center">
+                  <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Opening Pcs</div>
+                  <div className="text-lg font-black text-slate-700 mt-1">{selectedHistoryItem.openingPisc}</div>
+                </div>
+                <div className="text-center border-l border-slate-200">
+                  <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Closing Pcs</div>
+                  <div className="text-lg font-black text-cyan-600 mt-1">{selectedHistoryItem.closingPisc}</div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Transaction logs</h4>
+                <div className="overflow-x-auto border border-slate-100 rounded-2xl">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-slate-50 border-b border-slate-100">
+                      <tr>
+                        <th className="px-4 py-2.5 text-[9px] font-black text-slate-400 uppercase tracking-wider">SO No</th>
+                        <th className="px-4 py-2.5 text-[9px] font-black text-slate-400 uppercase tracking-wider">Receiver Name</th>
+                        <th className="px-4 py-2.5 text-[9px] font-black text-slate-400 uppercase tracking-wider text-center">Issued Pcs</th>
+                        <th className="px-4 py-2.5 text-[9px] font-black text-slate-400 uppercase tracking-wider">Date & Time</th>
+                        <th className="px-4 py-2.5 text-[9px] font-black text-slate-400 uppercase tracking-wider">User</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {(() => {
+                        const issueLogs = (selectedHistoryItem.detailsLog || []).filter((log: any) => log.issuesQty && log.issuesQty > 0);
+                        if (issueLogs.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan={5} className="px-4 py-8 text-center text-slate-400 italic text-[11px]">
+                                No issue logs recorded yet for this item.
+                              </td>
+                            </tr>
+                          );
+                        }
+                        return issueLogs.map((log: any, lIdx: number) => (
+                          <tr key={lIdx} className="hover:bg-slate-50/50">
+                            <td className="px-4 py-2.5 font-mono font-bold text-indigo-600 whitespace-nowrap">{log.soNo || '-'}</td>
+                            <td className="px-4 py-2.5 font-bold text-slate-600 whitespace-nowrap">{log.receiverName || '-'}</td>
+                            <td className="px-4 py-2.5 font-mono font-bold text-amber-600 text-center">
+                              {log.issuesQty}
+                            </td>
+                            <td className="px-4 py-2.5 font-mono text-[10px] text-slate-500 font-bold whitespace-nowrap">{log.dateTime}</td>
+                            <td className="px-4 py-2.5 font-bold text-slate-700 whitespace-nowrap">
+                              {log.name}
+                            </td>
+                          </tr>
+                        ));
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end">
+              <button
+                onClick={() => setSelectedHistoryItem(null)}
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Issue Stock Modal */}
+      {selectedIssueItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-md w-full flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="px-6 py-5 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-black text-slate-800 uppercase tracking-wider font-Outfit">
+                  Issue Belt Stock
+                </h3>
+                <p className="text-[11px] text-slate-500 font-bold mt-0.5">
+                  {selectedIssueItem.beltStock} — {selectedIssueItem.size}
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedIssueItem(null)}
+                className="p-1.5 hover:bg-slate-200/60 text-slate-400 hover:text-slate-650 rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <form onSubmit={handleIssueSubmit} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-2xl border border-slate-100 text-center">
+                <div>
+                  <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Opening Stock</div>
+                  <div className="text-sm font-black text-slate-700 mt-0.5">{selectedIssueItem.openingPisc} Pcs</div>
+                </div>
+                <div className="border-l border-slate-200">
+                  <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Current Closing</div>
+                  <div className="text-sm font-black text-cyan-600 mt-0.5">{selectedIssueItem.closingPisc} Pcs</div>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                  Quantity to Issue <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  required
+                  placeholder="e.g. 2"
+                  value={issueForm.issuesPisc}
+                  onChange={(e) => setIssueForm({ ...issueForm, issuesPisc: e.target.value })}
+                  className="w-full px-3.5 py-2 border border-zinc-200 rounded-xl text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                  Sales Order No (So-No) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. 11673"
+                  value={issueForm.soNo}
+                  onChange={(e) => setIssueForm({ ...issueForm, soNo: e.target.value })}
+                  className="w-full px-3.5 py-2 border border-zinc-200 rounded-xl text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                  Receiver Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Asif Keshwani"
+                  value={issueForm.receiverName}
+                  onChange={(e) => setIssueForm({ ...issueForm, receiverName: e.target.value })}
+                  className="w-full px-3.5 py-2 border border-zinc-200 rounded-xl text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setSelectedIssueItem(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-205 text-slate-700 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95"
+                >
+                  <Check size={14} /> Submit Issue
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Update Stock Modal */}
+      {selectedUpdateItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-md w-full flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="px-6 py-5 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-black text-slate-800 uppercase tracking-wider font-Outfit">
+                  Receive / Update Stock
+                </h3>
+                <p className="text-[11px] text-slate-500 font-bold mt-0.5">
+                  {selectedUpdateItem.beltStock} — {selectedUpdateItem.size}
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedUpdateItem(null)}
+                className="p-1.5 hover:bg-slate-200/60 text-slate-400 hover:text-slate-650 rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <form onSubmit={handleUpdateSubmit} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-2xl border border-slate-100 text-center">
+                <div>
+                  <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Opening Stock</div>
+                  <div className="text-sm font-black text-slate-700 mt-0.5">{selectedUpdateItem.openingPisc} Pcs</div>
+                </div>
+                <div className="border-l border-slate-200">
+                  <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Current Closing</div>
+                  <div className="text-sm font-black text-cyan-600 mt-0.5">{selectedUpdateItem.closingPisc} Pcs</div>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                  Quantity to Receive (Recv Pcs) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  required
+                  placeholder="e.g. 5"
+                  value={updateForm.recvPisc}
+                  onChange={(e) => setUpdateForm({ recvPisc: e.target.value })}
+                  className="w-full px-3.5 py-2 border border-zinc-200 rounded-xl text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setSelectedUpdateItem(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-205 text-slate-700 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95"
+                >
+                  <Check size={14} /> Update Stock
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );
