@@ -712,7 +712,8 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
               </Button>
             </div>
           </div>
-        </CardHeader>
+        </div>
+      </CardHeader>
         <CardContent>
           <div className="rounded-md border border-zinc-200 overflow-hidden">
             <Table>
