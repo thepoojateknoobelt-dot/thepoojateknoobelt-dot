@@ -33,6 +33,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
   const [selectedQuotation, setSelectedQuotation] = useState<EnhancedQuotation | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // Tab State & Company State
   const [activeTab, setActiveTab] = useState<'quotations' | 'orders'>('quotations');
@@ -95,6 +96,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
 
   useEffect(() => {
     setSelectedStatus('all');
+    setSelectedIds([]); // Clear selection when active tab changes
   }, [activeTab]);
 
   const handleApprove = async (q: Quotation) => {
@@ -230,6 +232,42 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
       toast.error(err.message || 'Execution failed');
     } finally {
       setSmartCutConfirming(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) return;
+    if (!window.confirm(`Are you sure you want to delete the ${selectedIds.length} selected records?`)) return;
+
+    try {
+      const res = await fetch('/api/quotations/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds })
+      });
+
+      if (!res.ok) throw new Error('Bulk delete failed');
+
+      toast.success(`${selectedIds.length} records deleted successfully!`);
+      setSelectedIds([]);
+      fetchQuotations();
+    } catch (err) {
+      toast.error('Failed to delete selected records');
+    }
+  };
+
+  const handleSingleDelete = async (id: string) => {
+    if (!window.confirm("Are you sure you want to delete this record?")) return;
+    try {
+      const res = await fetch(`/api/quotations/${id}`, {
+        method: 'DELETE'
+      });
+      if (!res.ok) throw new Error('Delete failed');
+      toast.success('Record deleted successfully');
+      setSelectedQuotation(null);
+      fetchQuotations();
+    } catch (err) {
+      toast.error('Failed to delete record');
     }
   };
 
@@ -633,7 +671,19 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                 Showing {filteredQuotations.length} of {quotations.length} records {hasActiveFilters && '(Filtered)'}
               </CardDescription>
             </div>
-            <div className="flex bg-zinc-100 p-1 rounded-lg border border-zinc-200/50 self-start sm:self-auto shadow-inner">
+            <div className="flex items-center gap-3 self-start sm:self-auto">
+              {user?.role === 'admin' && selectedIds.length > 0 && (
+                <Button 
+                  variant="destructive" 
+                  size="sm" 
+                  className="h-8 text-xs font-bold gap-1.5 cursor-pointer bg-red-600 hover:bg-red-700 text-white"
+                  onClick={handleBulkDelete}
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Delete Selected ({selectedIds.length})
+                </Button>
+              )}
+              <div className="flex bg-zinc-100 p-1 rounded-lg border border-zinc-200/50 shadow-inner">
               <Button
                 variant="ghost"
                 size="sm"
@@ -668,6 +718,24 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
             <Table>
               <TableHeader className="bg-zinc-50/50">
                 <TableRow>
+                  {user?.role === 'admin' && (
+                    <TableHead className="w-12 text-center py-3">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-950 cursor-pointer"
+                        checked={filteredQuotations.length > 0 && filteredQuotations.every(q => selectedIds.includes(q.id))}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            const newSelected = Array.from(new Set([...selectedIds, ...filteredQuotations.map(q => q.id)]));
+                            setSelectedIds(newSelected);
+                          } else {
+                            const filteredList = filteredQuotations.map(q => q.id);
+                            setSelectedIds(prev => prev.filter(id => !filteredList.includes(id)));
+                          }
+                        }}
+                      />
+                    </TableHead>
+                  )}
                   <TableHead className="w-[100px] font-bold text-zinc-700">Order ID</TableHead>
                   <TableHead className="font-bold text-zinc-700">Date</TableHead>
                   <TableHead className="font-bold text-zinc-700">Client</TableHead>
@@ -682,7 +750,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
               <TableBody>
                 {filteredQuotations.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={activeTab === 'orders' ? 7 : 6} className="h-24 text-center text-zinc-400 italic">
+                    <TableCell colSpan={(activeTab === 'orders' ? 7 : 6) + (user?.role === 'admin' ? 1 : 0)} className="h-24 text-center text-zinc-400 italic">
                       No matching records found.
                     </TableCell>
                   </TableRow>
@@ -693,6 +761,22 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                       className="cursor-pointer hover:bg-zinc-50/50 transition-colors"
                       onClick={() => setSelectedQuotation(q)}
                     >
+                      {user?.role === 'admin' && (
+                        <TableCell onClick={(e) => e.stopPropagation()} className="w-12 text-center">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-950 cursor-pointer"
+                            checked={selectedIds.includes(q.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedIds(prev => [...prev, q.id]);
+                              } else {
+                                setSelectedIds(prev => prev.filter(id => id !== q.id));
+                              }
+                            }}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell className="font-mono font-bold text-zinc-700 text-sm">
                         #{q.orderNumber}
                       </TableCell>
@@ -1039,6 +1123,15 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
               >
                 <Scissors className="h-4 w-4" />
                 Execute & Smart Cut
+              </Button>
+            )}
+            {user?.role === 'admin' && selectedQuotation && (
+              <Button 
+                variant="destructive" 
+                className="gap-1.5 bg-red-650 hover:bg-red-750 text-white font-bold cursor-pointer"
+                onClick={() => handleSingleDelete(selectedQuotation.id)}
+              >
+                Delete
               </Button>
             )}
             <Button variant="outline" onClick={() => setSelectedQuotation(null)}>Close</Button>

@@ -2695,6 +2695,33 @@ app.put('/api/quotations/:id', authenticate, async (req, res) => {
   }
 });
 
+app.delete('/api/quotations/:id', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const result = await pool.query('DELETE FROM quotations WHERE id = $1', [req.params.id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Quotation not found' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to delete quotation', err);
+    res.status(500).json({ error: 'Failed to delete quotation' });
+  }
+});
+
+app.post('/api/quotations/bulk-delete', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'No IDs provided' });
+  }
+  try {
+    await pool.query('DELETE FROM quotations WHERE id = ANY($1)', [ids]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to bulk delete quotations', err);
+    res.status(500).json({ error: 'Failed to delete quotations' });
+  }
+});
+
 // Users Management Routes
 app.get('/api/users', authenticate, async (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
