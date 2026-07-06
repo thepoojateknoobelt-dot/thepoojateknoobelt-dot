@@ -2271,7 +2271,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
       });
     } catch (err) {
       console.error("Error adding roll:", err);
-      alert("Failed to add roll. Please try again.");
+      alert(err instanceof Error ? err.message : "Failed to add roll. Please try again.");
     } finally {
       setIsSyncing(false);
     }

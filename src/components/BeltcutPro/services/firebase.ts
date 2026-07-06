@@ -39,7 +39,12 @@ export const saveRoll = async (roll: any) => {
       body: JSON.stringify(roll),
     });
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      let errMsg = `HTTP error! status: ${response.status}`;
+      try {
+        const errData = await response.json();
+        if (errData && errData.error) errMsg = errData.error;
+      } catch (_) {}
+      throw new Error(errMsg);
     }
     return await response.json();
   } catch (error) {

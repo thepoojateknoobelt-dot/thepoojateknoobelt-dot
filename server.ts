@@ -2320,8 +2320,11 @@ app.post('/api/rolls', async (req, res) => {
       [id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived || false, computedIsReuse, parentRollId || null, status || 'active', parseFloat(reorderLevel) || 0]
     );
     res.json({ id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived: isArchived || false, isReuse: computedIsReuse, parentRollId: parentRollId || null, status: status || 'active', reorderLevel: parseFloat(reorderLevel) || 0, cuts: [] });
-  } catch (err) {
+  } catch (err: any) {
     console.error('Failed to create roll', err);
+    if (err.code === '23505') {
+      return res.status(400).json({ error: `Roll ID "${id}" already exists in the database. Please use a unique Roll ID.` });
+    }
     res.status(500).json({ error: 'Failed to create roll' });
   }
 });
