@@ -33,6 +33,8 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
   const [selectedQuotation, setSelectedQuotation] = useState<EnhancedQuotation | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
+  const [isApproveDialogOpen, setIsApproveDialogOpen] = useState(false);
+  const [approvedDiscount, setApprovedDiscount] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // Tab State & Company State
@@ -99,24 +101,34 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
     setSelectedIds([]); // Clear selection when active tab changes
   }, [activeTab]);
 
-  const handleApprove = async (q: Quotation) => {
-    try {
-      const newTotal = q.totalCost + (q.salesMarkup || 0) - (q.discountRequested || 0);
+  const handleApprove = (q: Quotation) => {
+    setApprovedDiscount((q.discountRequested || 0).toString());
+    setIsApproveDialogOpen(true);
+  };
 
-      const res = await fetch(`/api/quotations/${q.id}`, {
+  const handleApproveConfirm = async () => {
+    if (!selectedQuotation) return;
+    try {
+      const discountVal = parseFloat(approvedDiscount) || 0;
+      // Calculate new total cost based on the adjusted approved discount
+      const newTotal = selectedQuotation.totalCost + (selectedQuotation.salesMarkup || 0) - discountVal;
+
+      const res = await fetch(`/api/quotations/${selectedQuotation.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           status: 'approved',
-          totalCost: newTotal
+          totalCost: newTotal,
+          discountRequested: discountVal
         })
       });
 
       if (!res.ok) throw new Error('Approve failed');
 
       toast.success('Discount approved and price updated');
-      fetchQuotations();
+      setIsApproveDialogOpen(false);
       setSelectedQuotation(null);
+      fetchQuotations();
     } catch (err) {
       toast.error('Failed to approve');
     }
@@ -831,7 +843,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
         </CardContent>
       </Card>
 
-      <Dialog open={!!selectedQuotation && !isRejectDialogOpen} onOpenChange={(open) => !open && setSelectedQuotation(null)}>
+      <Dialog open={!!selectedQuotation && !isRejectDialogOpen && !isApproveDialogOpen} onOpenChange={(open) => !open && setSelectedQuotation(null)}>
         <DialogContent className="max-w-4xl sm:max-w-5xl">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold flex items-center gap-2">
@@ -1208,6 +1220,65 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsRejectDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleReject}>Reject Request</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={isApproveDialogOpen} onOpenChange={setIsApproveDialogOpen}>
+        <DialogContent className="max-w-md sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Approve Discount Request</DialogTitle>
+            <DialogDescription>
+              Review the requested discount and adjust the final approved amount if necessary.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-150 text-xs space-y-1">
+              <p className="flex justify-between">
+                <span className="text-zinc-500 font-medium">Base Item Price:</span>
+                <span className="font-mono font-bold text-zinc-900">{formatCurrency(selectedQuotation?.totalCost || 0)}</span>
+              </p>
+              {selectedQuotation?.salesMarkup && selectedQuotation.salesMarkup > 0 && (
+                <p className="flex justify-between">
+                  <span className="text-emerald-600 font-medium">Sales Markup (+):</span>
+                  <span className="font-mono font-bold">+{formatCurrency(selectedQuotation.salesMarkup)}</span>
+                </p>
+              )}
+              <p className="flex justify-between font-bold text-amber-600 border-t pt-1 mt-1">
+                <span>Requested Discount (-):</span>
+                <span className="font-mono">-{formatCurrency(selectedQuotation?.discountRequested || 0)}</span>
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-zinc-650 uppercase tracking-wider">Approved Discount Amount (₹)</Label>
+              <Input 
+                type="number"
+                placeholder="Enter approved discount amount" 
+                value={approvedDiscount}
+                onChange={(e) => setApprovedDiscount(e.target.value)}
+                className="h-10 text-sm font-bold bg-white focus:ring-emerald-500 focus:border-emerald-500"
+              />
+              <p className="text-[10px] text-zinc-400">
+                You can reduce or increase the discount before final approval.
+              </p>
+            </div>
+            {selectedQuotation && (
+              <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl text-xs flex justify-between items-center font-bold text-emerald-800">
+                <span>New Net Payable Price:</span>
+                <span className="font-mono text-sm">
+                  {formatCurrency(
+                    Math.round(
+                      (selectedQuotation.totalCost || 0) + 
+                      (selectedQuotation.salesMarkup || 0) - 
+                      (parseFloat(approvedDiscount) || 0)
+                    )
+                  )}
+                </span>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="h-9 text-xs" onClick={() => setIsApproveDialogOpen(false)}>Cancel</Button>
+            <Button className="h-9 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold" onClick={handleApproveConfirm}>Confirm Approval</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
