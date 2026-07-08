@@ -137,6 +137,7 @@ export interface Quotation {
   status: 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'order' | 'executed';
   discountRequested?: number;
   discountReason?: string;
+  salesMarkup?: number;
   rejectionReason?: string;
   createdBy: string;
   createdAt: any;

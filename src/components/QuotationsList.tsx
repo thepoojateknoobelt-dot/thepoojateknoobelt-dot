@@ -7,7 +7,7 @@ import { Badge } from './ui/badge';
 import { toast } from 'sonner';
 import { formatCurrency, cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
-import { CheckCircle2, XCircle, ShoppingCart, Download, FileText, Clock, AlertCircle, Search, SlidersHorizontal, Calendar, Filter, X, RotateCcw, Building2, Printer, Scissors, Zap, Package, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, XCircle, ShoppingCart, Download, FileText, Clock, AlertCircle, Search, SlidersHorizontal, Calendar, Filter, X, RotateCcw, Building2, Printer, Scissors, Zap, Package, TriangleAlert, TrendingUp } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from './ui/dialog';
 import { Label } from './ui/label';
 import { Input } from './ui/input';
@@ -101,7 +101,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
 
   const handleApprove = async (q: Quotation) => {
     try {
-      const newTotal = q.totalCost - (q.discountRequested || 0);
+      const newTotal = q.totalCost + (q.salesMarkup || 0) - (q.discountRequested || 0);
 
       const res = await fetch(`/api/quotations/${q.id}`, {
         method: 'PUT',
@@ -370,7 +370,10 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
       ? q.items!.reduce((sum, item) => sum + item.totalCost, 0)
       : q.totalCost;
     const discountAmt = q.discountRequested || 0;
-    const finalAmt = q.totalCost;
+    const salesMarkupAmt = q.salesMarkup || 0;
+    const finalAmt = q.status === 'approved'
+      ? q.totalCost
+      : q.totalCost + salesMarkupAmt - discountAmt;
 
     // Render table rows
     let tableRowsHTML = '';
@@ -488,6 +491,12 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                 <td class="lbl">Items Total</td>
                 <td class="val">${formatCurrency(totalBeforeAdjustment)}</td>
               </tr>
+              ${salesMarkupAmt > 0 ? `
+              <tr>
+                <td class="lbl" style="color: #047857;">Sales Markup (+)</td>
+                <td class="val" style="color: #047857;">+ ${formatCurrency(salesMarkupAmt)}</td>
+              </tr>
+              ` : ''}
               ${discountAmt > 0 ? `
               <tr>
                 <td class="lbl" style="color: #b45309;">Special Adjustment (Discount)</td>
@@ -1081,6 +1090,16 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                   </div>
                 )}
 
+                {/* Sales Markup details */}
+                {selectedQuotation.salesMarkup && selectedQuotation.salesMarkup > 0 && (
+                  <div className="p-4 bg-emerald-50/60 rounded-2xl border border-emerald-100 space-y-1 shadow-sm">
+                    <div className="flex items-center gap-2 text-emerald-900 font-bold text-xs uppercase tracking-wider">
+                      <TrendingUp className="h-4 w-4 text-emerald-600" />
+                      Sales Markup Applied: +{formatCurrency(selectedQuotation.salesMarkup)}
+                    </div>
+                  </div>
+                )}
+
                 {/* Discount details */}
                 {selectedQuotation.discountRequested && selectedQuotation.discountRequested > 0 && (
                   <div className="p-4 bg-amber-50/60 rounded-2xl border border-amber-100 space-y-2 shadow-sm">
@@ -1089,9 +1108,40 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                       Discount Requested: {formatCurrency(selectedQuotation.discountRequested)}
                     </div>
                     <p className="text-xs text-amber-700 italic">"{selectedQuotation.discountReason}"</p>
-                    <p className="text-xs text-amber-600 font-extrabold">Final Price after discount: <span className="font-mono text-sm text-amber-900">{formatCurrency(Math.round(selectedQuotation.totalCost - selectedQuotation.discountRequested))}</span></p>
                   </div>
                 )}
+
+                {/* Net Price summary */}
+                <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-200 space-y-1 shadow-sm mt-2">
+                  <p className="text-xs text-zinc-650 font-extrabold flex justify-between items-center">
+                    <span>Base Items Cost:</span>
+                    <span className="font-mono text-sm text-zinc-900">{formatCurrency(selectedQuotation.totalCost)}</span>
+                  </p>
+                  {selectedQuotation.salesMarkup && selectedQuotation.salesMarkup > 0 && (
+                    <p className="text-xs text-emerald-650 font-extrabold flex justify-between items-center">
+                      <span>Sales Markup (+):</span>
+                      <span className="font-mono text-sm text-emerald-700">+{formatCurrency(selectedQuotation.salesMarkup)}</span>
+                    </p>
+                  )}
+                  {selectedQuotation.discountRequested && selectedQuotation.discountRequested > 0 && (
+                    <p className="text-xs text-amber-650 font-extrabold flex justify-between items-center">
+                      <span>Discount (-):</span>
+                      <span className="font-mono text-sm text-amber-700">-{formatCurrency(selectedQuotation.discountRequested)}</span>
+                    </p>
+                  )}
+                  <p className="text-xs text-zinc-800 font-black flex justify-between items-center pt-1.5 border-t border-zinc-200 mt-1.5 text-sm">
+                    <span>Final Net Price:</span>
+                    <span className="font-mono text-emerald-600 text-base">
+                      {formatCurrency(
+                        Math.round(
+                          selectedQuotation.status === 'approved'
+                            ? selectedQuotation.totalCost
+                            : selectedQuotation.totalCost + (selectedQuotation.salesMarkup || 0) - (selectedQuotation.discountRequested || 0)
+                        )
+                      )}
+                    </span>
+                  </p>
+                </div>
               </div>
             </div>
           )}

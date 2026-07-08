@@ -71,6 +71,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
   const [expandedRates, setExpandedRates] = useState<Record<string, boolean>>({});
   const [discountRequested, setDiscountRequested] = useState('');
   const [discountReason, setDiscountReason] = useState('');
+  const [salesMarkup, setSalesMarkup] = useState('');
   const [clientHistory, setClientHistory] = useState<Quotation[]>([]);
   const [quotationItems, setQuotationItems] = useState<QuotationItem[]>([]);
   const [renamingItemId, setRenamingItemId] = useState<string | null>(null);
@@ -412,6 +413,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
         status,
         discountRequested: parseFloat(discountRequested) || 0, // overall discount
         discountReason: discountReason,
+        salesMarkup: parseFloat(salesMarkup) || 0, // overall sales markup
         createdBy: user?.id,
         createdByName: user?.name || user?.username,
         items: quotationItems // Send the items array!
@@ -435,6 +437,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
       setResult(null);
       setDiscountRequested('');
       setDiscountReason('');
+      setSalesMarkup('');
     } catch (err) {
       toast.error('Failed to save quotation');
     }
@@ -1530,8 +1533,15 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                     </>
                   )}
                   
+                  {salesMarkup && parseFloat(salesMarkup) > 0 && (
+                    <div className="flex justify-between border-b border-zinc-150 pb-1.5 text-emerald-650 font-bold">
+                      <span>Sales Markup (+)</span>
+                      <span className="font-mono">+ {formatCurrency(parseFloat(salesMarkup) || 0)}</span>
+                    </div>
+                  )}
+
                   {discountRequested && parseFloat(discountRequested) > 0 && (
-                    <div className="flex justify-between border-b border-zinc-150 pb-1.5 text-amber-600 font-bold">
+                    <div className="flex justify-between border-b border-zinc-150 pb-1.5 text-amber-605 font-bold">
                       <span>Adjustment (Discount)</span>
                       <span className="font-mono">- {formatCurrency(parseFloat(discountRequested) || 0)}</span>
                     </div>
@@ -1541,7 +1551,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                     <span className="text-zinc-900">Combined Net Selling Price</span>
                     <span className="font-mono text-emerald-650 text-base">
                       {formatCurrency(
-                        Math.max(0, quotationItems.reduce((sum, item) => sum + item.totalCost, 0) - (parseFloat(discountRequested) || 0))
+                        Math.max(0, quotationItems.reduce((sum, item) => sum + item.totalCost, 0) + (parseFloat(salesMarkup) || 0) - (parseFloat(discountRequested) || 0))
                       )}
                     </span>
                   </div>
@@ -1550,9 +1560,24 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
 
               {/* Save actions panel */}
               <div className="space-y-4 flex flex-col justify-between">
-                <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <Label className="text-[10px] font-bold uppercase text-zinc-500">Quotation Level Adjustment</Label>
+                    <Label className="text-[10px] font-bold uppercase text-zinc-500">Sales Markup (+)</Label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-xs">{config.currency || '₹'}</span>
+                      <Input 
+                        type="number" 
+                        placeholder="Add extra markup amount" 
+                        value={salesMarkup}
+                        onChange={(e) => setSalesMarkup(e.target.value)}
+                        className="bg-white border-zinc-450 pl-7 h-10 focus:ring-emerald-500 text-sm font-bold text-emerald-600 focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] font-bold uppercase text-zinc-500 flex items-center justify-between">
+                      <span>Discount Requested (-)</span>
+                    </Label>
                     <div className="relative">
                       <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-xs">{config.currency || '₹'}</span>
                       <Input 
@@ -1560,18 +1585,24 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                         placeholder="Overall discount amount" 
                         value={discountRequested}
                         onChange={(e) => setDiscountRequested(e.target.value)}
-                        className="bg-white border-zinc-450 pl-7 h-10 focus:ring-zinc-900 text-sm font-bold"
+                        className="bg-white border-zinc-450 pl-7 h-10 focus:ring-amber-500 text-sm font-bold text-amber-600 focus:border-amber-500"
                       />
                     </div>
                   </div>
+                </div>
+
+                <div className="space-y-3">
                   {discountRequested && parseFloat(discountRequested) > 0 && (
                     <div className="space-y-1 animate-in fade-in slide-in-from-top-1">
-                      <Label className="text-[10px] font-bold uppercase text-zinc-500">Discount Clarification Reason</Label>
+                      <Label className="text-[10px] font-bold uppercase text-amber-600 flex items-center gap-1.5">
+                        <span>Discount Clarification Reason</span>
+                        <span className="text-[8px] font-extrabold uppercase bg-amber-50 text-amber-700 px-1 rounded border border-amber-100">Requires Admin Approval</span>
+                      </Label>
                       <Input 
                         placeholder="Provide details about why discount is requested..." 
                         value={discountReason}
                         onChange={(e) => setDiscountReason(e.target.value)}
-                        className="bg-white border-zinc-450 h-9 text-xs italic"
+                        className="bg-white border-amber-200 focus:ring-amber-500 focus:border-amber-500 h-9 text-xs italic"
                       />
                     </div>
                   )}

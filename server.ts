@@ -126,12 +126,11 @@ async function initializeDatabase() {
     } catch (alterErr) {
       console.warn('Failed to add company column to quotations table:', alterErr);
     }
-
-    // Ensure belt_style, selected_bom_options and items columns exist on quotations table
     try {
       await pool.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS belt_style VARCHAR(255)`);
       await pool.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS selected_bom_options JSONB DEFAULT '{}'::jsonb`);
       await pool.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS items JSONB DEFAULT '[]'::jsonb`);
+      await pool.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS sales_markup NUMERIC DEFAULT 0`);
     } catch (alterErr) {
       console.warn('Failed to add columns to quotations table:', alterErr);
     }
@@ -2933,7 +2932,8 @@ app.get('/api/quotations', async (req, res) => {
       updatedAt: row.updated_at,
       auditLogs: typeof row.audit_logs === 'string' ? JSON.parse(row.audit_logs) : row.audit_logs,
       company: row.company,
-      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || [])
+      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+      salesMarkup: row.sales_markup ? parseFloat(row.sales_markup) : 0
     }));
     res.json(quotations);
   } catch (err) {
@@ -2945,26 +2945,26 @@ app.get('/api/quotations', async (req, res) => {
 app.post('/api/quotations', authenticate, async (req, res) => {
   try {
     const id = Date.now().toString();
-    const { clientId, clientName, beltType = '', beltStyle = '', selectedBOMOptions = {}, dimensions = {}, jointType = '', tapeType = '', totalCost, status, discountRequested, discountReason, rejectionReason, createdBy, auditLogs, company, items = [] } = req.body;
+    const { clientId, clientName, beltType = '', beltStyle = '', selectedBOMOptions = {}, dimensions = {}, jointType = '', tapeType = '', totalCost, status, discountRequested, discountReason, rejectionReason, createdBy, auditLogs, company, items = [], salesMarkup = 0 } = req.body;
     const now = new Date();
     await pool.query(
       `INSERT INTO quotations (
         id, client_id, client_name, belt_type, dimensions, joint_type, tape_type, 
         total_cost, status, discount_requested, discount_reason, rejection_reason, 
-        created_by, created_at, updated_at, audit_logs, company, belt_style, selected_bom_options, items
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+        created_by, created_at, updated_at, audit_logs, company, belt_style, selected_bom_options, items, sales_markup
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
       [
         id, clientId, clientName, beltType, JSON.stringify(dimensions), jointType || '', tapeType || '',
         totalCost, status, discountRequested || null, discountReason || null, rejectionReason || null,
         createdBy, now, now, JSON.stringify(auditLogs || []), company || null, beltStyle || '', JSON.stringify(selectedBOMOptions || {}),
-        JSON.stringify(items || [])
+        JSON.stringify(items || []), salesMarkup
       ]
     );
     res.json({
       id, clientId, clientName, beltType, beltStyle: beltStyle || '', selectedBOMOptions: selectedBOMOptions || {}, dimensions, jointType: jointType || '', tapeType: tapeType || '',
       totalCost, status, discountRequested, discountReason, rejectionReason,
       createdBy, createdAt: now.toISOString(), updatedAt: now.toISOString(), auditLogs: auditLogs || [],
-      company, items: items || []
+      company, items: items || [], salesMarkup: salesMarkup || 0
     });
   } catch (err) {
     console.error('Failed to create quotation', err);
@@ -2997,6 +2997,7 @@ app.put('/api/quotations/:id', authenticate, async (req, res) => {
     const auditLogs = req.body.auditLogs !== undefined ? req.body.auditLogs : existing.audit_logs;
     const company = req.body.company !== undefined ? req.body.company : existing.company;
     const items = req.body.items !== undefined ? req.body.items : existing.items;
+    const salesMarkup = req.body.salesMarkup !== undefined ? req.body.salesMarkup : (existing.sales_markup ? parseFloat(existing.sales_markup) : 0);
 
     const oldStatus = existing.status;
     const newStatus = req.body.status !== undefined ? req.body.status : existing.status;
@@ -3018,8 +3019,8 @@ app.put('/api/quotations/:id', authenticate, async (req, res) => {
         joint_type = $5, tape_type = $6, total_cost = $7, status = $8, 
         discount_requested = $9, discount_reason = $10, rejection_reason = $11, 
         created_by = $12, updated_at = $13, audit_logs = $14, company = $15,
-        belt_style = $16, selected_bom_options = $17, items = $18
-      WHERE id = $19 RETURNING *`,
+        belt_style = $16, selected_bom_options = $17, items = $18, sales_markup = $19
+      WHERE id = $20 RETURNING *`,
       [
         clientId, clientName, beltType, typeof dimensions === 'string' ? dimensions : JSON.stringify(dimensions),
         jointType || '', tapeType || '', totalCost, status,
@@ -3030,6 +3031,7 @@ app.put('/api/quotations/:id', authenticate, async (req, res) => {
         beltStyle || '',
         typeof selectedBOMOptions === 'string' ? selectedBOMOptions : JSON.stringify(selectedBOMOptions || {}),
         typeof items === 'string' ? items : JSON.stringify(items || []),
+        salesMarkup,
         req.params.id
       ]
     );
@@ -3056,7 +3058,8 @@ app.put('/api/quotations/:id', authenticate, async (req, res) => {
       updatedAt: row.updated_at,
       auditLogs: typeof row.audit_logs === 'string' ? JSON.parse(row.audit_logs) : row.audit_logs,
       company: row.company,
-      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || [])
+      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+      salesMarkup: row.sales_markup ? parseFloat(row.sales_markup) : 0
     });
   } catch (err) {
     console.error('Failed to update quotation', err);
@@ -3214,6 +3217,21 @@ app.get('/api/audit-logs', authenticate, async (req: any, res) => {
   } catch (err) {
     console.error('Failed to get audit logs', err);
     res.status(500).json({ error: 'Failed to retrieve audit logs' });
+  }
+});
+
+app.post('/api/audit-logs/bulk-delete', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Invalid or empty IDs list' });
+  }
+  try {
+    await pool.query('DELETE FROM audit_logs WHERE id = ANY($1)', [ids]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to bulk delete audit logs', err);
+    res.status(500).json({ error: 'Failed to delete logs' });
   }
 });
 
