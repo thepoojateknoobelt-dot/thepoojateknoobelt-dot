@@ -125,9 +125,12 @@ const calculatePrecisionScore = (roll: Roll, order: Order, placement: { x: numbe
   const hitsTopEdge = Math.abs(y) < 0.01;
   const hitsBottomEdge = Math.abs((y + requiredWidth) - roll.fullWidth) < 0.01;
 
-  if (hitsTopEdge || hitsBottomEdge) {
+  if (hitsTopEdge) {
+    score += 1005; // Slight preference for top edge alignment
+    reasons.push("Top Edge Aligned");
+  } else if (hitsBottomEdge) {
     score += 1000;
-    reasons.push("Edge Aligned");
+    reasons.push("Bottom Edge Aligned");
   }
 
   // 3. Perfect Width Match (The most "manageable" cut)
