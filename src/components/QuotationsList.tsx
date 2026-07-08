@@ -1162,7 +1162,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
         </DialogContent>
       </Dialog>
       <Dialog open={isConvertDialogOpen} onOpenChange={setIsConvertDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Building2 className="h-5 w-5 text-indigo-600" />
@@ -1211,7 +1211,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
 
       {/* ─── Smart Cut Plan Dialog ─────────────────────────────────────────── */}
       <Dialog open={isSmartCutDialogOpen} onOpenChange={(open) => { if (!open) { setIsSmartCutDialogOpen(false); setSmartCutPlan(null); } }}>
-        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogContent className="max-w-4xl sm:max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold flex items-center gap-2">
               <div className="p-1.5 bg-gradient-to-br from-violet-600 to-indigo-600 rounded-lg">

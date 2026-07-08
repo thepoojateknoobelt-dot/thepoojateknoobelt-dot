@@ -1177,7 +1177,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                             <TableCell className="text-right font-mono text-xs py-1.5">{formatCurrency(result.summary.subtotal)}</TableCell>
                           </TableRow>
                           <TableRow className="text-zinc-500 hover:bg-zinc-50/30 transition-colors h-7">
-                            <TableCell className="text-[10px] pl-6 py-1">Purchase GST ({config.constants.purchaseGst}%)</TableCell>
+                            <TableCell className="text-[10px] pl-6 py-1">Purchase GST ({result.summary.purchaseGstPercent ?? config.constants.purchaseGst}%)</TableCell>
                             <TableCell className="text-right font-mono text-[10px] py-1">{formatCurrency(result.summary.purchaseGst)}</TableCell>
                           </TableRow>
                           <TableRow className="bg-zinc-50/30 font-semibold border-y border-zinc-100 h-8">
@@ -1193,7 +1193,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                             <TableCell className="text-right font-mono text-[10px] py-1">{formatCurrency(result.summary.profit)}</TableCell>
                           </TableRow>
                           <TableRow className="text-zinc-500 hover:bg-zinc-50/30 transition-colors h-7">
-                            <TableCell className="text-[10px] pl-6 py-1">Sale GST ({config.constants.saleGst}%)</TableCell>
+                            <TableCell className="text-[10px] pl-6 py-1">Sale GST ({result.summary.saleGstPercent ?? config.constants.saleGst}%)</TableCell>
                             <TableCell className="text-right font-mono text-[10px] py-1">{formatCurrency(result.summary.saleGst)}</TableCell>
                           </TableRow>
                           <TableRow className="text-zinc-500 hover:bg-zinc-50/30 transition-colors h-7 border-b border-zinc-100">
@@ -1222,7 +1222,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span className="text-zinc-400 font-mono text-sm">+{formatCurrency(result.summary.saleGst)}</span>
-                          <span className="text-zinc-500 text-[10px] font-bold uppercase italic">GST ({config.constants.saleGst}%)</span>
+                          <span className="text-zinc-500 text-[10px] font-bold uppercase italic">GST ({result.summary.saleGstPercent ?? config.constants.saleGst}%)</span>
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span className="text-zinc-400 font-mono text-sm">+{formatCurrency(result.summary.packingCost)}</span>
@@ -1677,7 +1677,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
 
       {/* Dialog Confirmation Modal */}
       <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
-        <DialogContent className="max-w-md mx-auto p-6 bg-white/95 backdrop-blur-md rounded-2xl border border-zinc-200 shadow-2xl animate-in zoom-in-95 duration-200">
+        <DialogContent className="max-w-md sm:max-w-md mx-auto p-6 bg-white/95 backdrop-blur-md rounded-2xl border border-zinc-200 shadow-2xl animate-in zoom-in-95 duration-200">
           <DialogHeader className="pb-3 border-b border-zinc-100">
             <DialogTitle className="text-lg font-black text-zinc-900 flex items-center gap-2">
               <CalcIcon className="h-5 w-5 text-indigo-600" />

@@ -148,30 +148,85 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
   const [selectedStyleIdx, setSelectedStyleIdx] = useState<number | null>(null);
   const [selectedBOMIdx, setSelectedBOMIdx] = useState<number | null>(null);
 
-  const handleSave = async () => {
+  const [categoryModal, setCategoryModal] = useState<{
+    isOpen: boolean;
+    mode: 'add' | 'edit';
+    catIdx?: number;
+    name: string;
+    gst: string;
+  }>({
+    isOpen: false,
+    mode: 'add',
+    name: '',
+    gst: ''
+  });
+
+  const GST_OPTIONS = [
+    { label: 'No Override (Use Global)', value: '' },
+    { label: '5%', value: '5' },
+    { label: '8%', value: '8' },
+    { label: '12%', value: '12' },
+    { label: '18%', value: '18' },
+  ];
+
+  const saveConfig = async (updatedBeltTypes?: Config['beltTypes']) => {
     setIsSaving(true);
     try {
-      // Clean up empty entries before saving
-      const cleanedConfig = {
+      const configToSave = {
         ...localConfig,
-        beltTypes: (localConfig.beltTypes || []).filter((t: any) => t.name?.trim()),
+        beltTypes: (updatedBeltTypes || localConfig.beltTypes || []).filter((t: any) => t.name?.trim()),
       };
       
       const res = await fetch('/api/settings/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cleanedConfig),
+        body: JSON.stringify(configToSave),
       });
       if (!res.ok) throw new Error('Failed to update configuration');
 
-      setLocalConfig(cleanedConfig); // Update local state with cleaned data
-      toast.success('Configuration updated successfully');
+      setLocalConfig(configToSave);
+      toast.success('Configuration saved permanently');
       onRefresh?.();
     } catch (err) {
-      toast.error('Failed to update configuration');
+      toast.error('Failed to save configuration');
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSave = () => saveConfig();
+
+  const handleSaveCategoryModal = () => {
+    if (!categoryModal.name.trim()) {
+      toast.error('Category Name is required');
+      return;
+    }
+    const updated = [...localConfig.beltTypes];
+    const name = categoryModal.name.trim();
+    const gst = categoryModal.gst === '' ? undefined : parseFloat(categoryModal.gst);
+
+    if (categoryModal.mode === 'add') {
+      const isDuplicate = updated.some(t => t.name.toLowerCase() === name.toLowerCase());
+      if (isDuplicate) {
+        toast.error('A category with this name already exists');
+        return;
+      }
+      updated.push({ id: Date.now().toString(), name, styles: [], gst });
+      setSelectedCatIdx(updated.length - 1);
+      setSelectedStyleIdx(null);
+      setSelectedBOMIdx(null);
+    } else {
+      const idx = categoryModal.catIdx!;
+      const isDuplicate = updated.some((t, i) => i !== idx && t.name.toLowerCase() === name.toLowerCase());
+      if (isDuplicate) {
+        toast.error('Another category with this name already exists');
+        return;
+      }
+      updated[idx] = { ...updated[idx], name, gst };
+    }
+
+    setCategoryModal({ ...categoryModal, isOpen: false });
+    saveConfig(updated);
   };
 
 
@@ -244,7 +299,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
   const removeItem = (type: 'beltTypes', index: number) => {
     const updated = [...(localConfig[type] as any[])];
     updated.splice(index, 1);
-    setLocalConfig({ ...localConfig, [type]: updated });
+    saveConfig(updated);
   };
 
   const convertRateToNewUnit = (rate: number, oldUnit: string, newUnit: string) => {
@@ -537,10 +592,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                 <div className="p-3 bg-zinc-50/80 border-b flex items-center justify-between">
                   <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">1. CATEGORY</span>
                   <Button variant="ghost" size="icon" className="h-6 w-6 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 hover:scale-110 transition-transform" onClick={() => {
-                    const name = prompt('New Category Name:');
-                    if (name) {
-                      setLocalConfig({ ...localConfig, beltTypes: [...(localConfig.beltTypes || []), { id: Date.now().toString(), name: name.trim(), styles: [] }] });
-                    }
+                    setCategoryModal({ isOpen: true, mode: 'add', name: '', gst: '' });
                   }}>
                     <ListPlus className="h-3 w-3" />
                   </Button>
@@ -557,20 +609,26 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                           : "border-transparent hover:bg-zinc-50 hover:border-zinc-100"
                       )}
                     >
-                      <span className={cn("text-sm font-bold truncate max-w-[120px]", selectedCatIdx === idx ? "text-blue-700" : "text-zinc-700")}>
-                        {cat.name.toUpperCase()}
-                      </span>
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <span className={cn("text-sm font-bold truncate", selectedCatIdx === idx ? "text-blue-700" : "text-zinc-700")}>
+                          {cat.name.toUpperCase()}
+                        </span>
+                        {cat.gst !== undefined && cat.gst !== null && (
+                          <span className="text-[9px] font-semibold text-emerald-600 bg-emerald-50 rounded px-1 w-fit mt-0.5">GST {cat.gst}%</span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-1 shrink-0">
                         <Edit2 
                           className="h-3 w-3 text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-blue-600 cursor-pointer" 
                           onClick={(e) => {
                             e.stopPropagation();
-                            const newName = prompt('Edit Category Name:', cat.name);
-                            if (newName && newName.trim()) {
-                              const updated = [...localConfig.beltTypes];
-                              updated[idx].name = newName.trim();
-                              setLocalConfig({ ...localConfig, beltTypes: updated });
-                            }
+                            setCategoryModal({
+                              isOpen: true,
+                              mode: 'edit',
+                              catIdx: idx,
+                              name: cat.name || '',
+                              gst: cat.gst !== undefined && cat.gst !== null ? cat.gst.toString() : ''
+                            });
                           }}
                         />
                         <Trash2 
@@ -1061,35 +1119,8 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                       </div>
                     </>
                   ) : (selectedCatIdx !== null && localConfig.beltTypes[selectedCatIdx]) ? (
-                    <div className="flex-1 flex flex-col p-4 space-y-4 animate-in fade-in slide-in-from-right-2 duration-300">
-                      <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100/50">
-                        <Label className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-4 block">Fix Cost: {localConfig.beltTypes[selectedCatIdx]?.name || ''}</Label>
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <Label className="text-xs font-bold text-zinc-700">Fix Cost (%)</Label>
-                            <span className="text-[10px] text-zinc-400 font-medium">Global: {localConfig.constants.fixCost}%</span>
-                          </div>
-                          <div className="relative">
-                            <Percent className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                            <Input 
-                              type="number"
-                              className="bg-white pl-9 h-10 font-bold text-zinc-900 border-zinc-300 focus:border-blue-400 rounded-lg"
-                              placeholder={localConfig.constants.fixCost.toString()}
-                              value={localConfig.beltTypes[selectedCatIdx]?.fixCost ?? ''}
-                              onChange={(e) => {
-                                const updated = [...localConfig.beltTypes];
-                                const val = e.target.value === '' ? undefined : parseFloat(e.target.value);
-                                updated[selectedCatIdx!].fixCost = val;
-                                setLocalConfig({ ...localConfig, beltTypes: updated });
-                              }}
-                            />
-                          </div>
-                          <p className="text-[9px] text-zinc-400 italic">Overrides global {localConfig.constants.fixCost}% for this category.</p>
-                        </div>
-                      </div>
-                      <div className="flex-1 flex flex-col items-center justify-center text-center p-6 bg-zinc-50/30 rounded-xl border border-dashed border-zinc-100">
-                        <p className="text-[10px] text-zinc-400 font-medium">Select a style and component to configure material-level costing.</p>
-                      </div>
+                    <div className="h-full flex items-center justify-center p-8 text-center text-zinc-400">
+                      <p className="text-xs italic">Select a style and component to configure material-level costing.</p>
                     </div>
                   ) : (
                     <div className="h-full flex items-center justify-center p-8 text-center text-zinc-400">
@@ -1107,7 +1138,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
       </div>
 
       <Dialog open={!!editingBOM} onOpenChange={(open) => !open && setEditingBOM(null)}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Manage Bill of Materials (BOM)</DialogTitle>
             <DialogDescription>
@@ -1209,6 +1240,61 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
 
           <DialogFooter>
             <Button variant="outline" className="w-full" onClick={() => setEditingBOM(null)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={categoryModal.isOpen} onOpenChange={(open) => !open && setCategoryModal({ ...categoryModal, isOpen: false })}>
+        <DialogContent className="sm:max-w-[380px]">
+          <DialogHeader>
+            <DialogTitle>{categoryModal.mode === 'add' ? '➕ Add New Category' : '✏️ Edit Category'}</DialogTitle>
+            <DialogDescription>
+              Set the category name and its GST rate.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-5 py-4">
+            {/* Category Name */}
+            <div className="space-y-1.5">
+              <Label htmlFor="catName" className="text-xs font-bold text-zinc-600 uppercase tracking-wider">Category Name</Label>
+              <Input
+                id="catName"
+                value={categoryModal.name}
+                onChange={(e) => setCategoryModal({ ...categoryModal, name: e.target.value })}
+                className="border-zinc-300 h-10 font-semibold text-zinc-900"
+                placeholder="e.g. PTFE, PVC, Rubber"
+                autoFocus
+              />
+            </div>
+            {/* GST Dropdown */}
+            <div className="space-y-1.5">
+              <Label htmlFor="catGst" className="text-xs font-bold text-zinc-600 uppercase tracking-wider">GST Rate</Label>
+              <Select
+                value={categoryModal.gst}
+                onValueChange={(val) => setCategoryModal({ ...categoryModal, gst: val })}
+              >
+                <SelectTrigger id="catGst" className="h-10 border-zinc-300 font-semibold text-zinc-900">
+                  <SelectValue placeholder="Select GST rate..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {GST_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value} className="font-medium">
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-zinc-400 italic">
+                {categoryModal.gst ? `This category will use ${categoryModal.gst}% GST.` : 'Will use the global GST rate from system constants.'}
+              </p>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="w-full sm:w-auto text-xs" onClick={() => setCategoryModal({ ...categoryModal, isOpen: false })}>
+              Cancel
+            </Button>
+            <Button className="w-full sm:w-auto text-xs bg-zinc-900 text-white hover:bg-zinc-800" onClick={handleSaveCategoryModal}>
+              {categoryModal.mode === 'add' ? 'Add Category' : 'Save Changes'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

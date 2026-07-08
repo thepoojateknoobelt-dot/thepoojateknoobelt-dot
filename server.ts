@@ -178,6 +178,20 @@ async function initializeDatabase() {
       console.warn('Failed to add lots column:', alterErr);
     }
 
+    // Add lot_number column to material_requests if it doesn't exist yet
+    try {
+      await pool.query(`ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS lot_number VARCHAR(255)`);
+    } catch (alterErr) {
+      console.warn('Failed to add lot_number column to material_requests:', alterErr);
+    }
+
+    // Add lot_number column to material_issues if it doesn't exist yet
+    try {
+      await pool.query(`ALTER TABLE material_issues ADD COLUMN IF NOT EXISTS lot_number VARCHAR(255)`);
+    } catch (alterErr) {
+      console.warn('Failed to add lot_number column to material_issues:', alterErr);
+    }
+
     // Seed default material stocks if empty
     try {
       const stockCheck = await pool.query('SELECT COUNT(*) FROM material_stocks');
@@ -321,6 +335,79 @@ async function initializeDatabase() {
       }
     } catch (typeErr) {
       console.warn('Failed to initialize custom_material_types table:', typeErr);
+    }
+
+    // Create Ready Belt Stocks table
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ready_belt_stocks (
+          id VARCHAR(255) PRIMARY KEY,
+          category VARCHAR(255) NOT NULL,
+          belt_stock VARCHAR(255) NOT NULL,
+          size VARCHAR(255) NOT NULL,
+          opening_pisc INT DEFAULT 0,
+          recv_pisc INT DEFAULT 0,
+          issues_pisc INT DEFAULT 0,
+          closing_pisc INT DEFAULT 0,
+          so_no VARCHAR(255),
+          receiver_name VARCHAR(255)
+        )
+      `);
+
+      const readyStockCheck = await pool.query('SELECT COUNT(*) FROM ready_belt_stocks');
+      if (parseInt(readyStockCheck.rows[0].count, 10) === 0) {
+        const seedData = [
+          // BROWN BELT
+          { category: 'BROWN BELT', belt_stock: 'SIALI BELT', size: '97" X 63"', opening_pisc: 0, recv_pisc: 0, issues_pisc: 0, closing_pisc: 0, so_no: '', receiver_name: '' },
+          { category: 'BROWN BELT', belt_stock: 'WITHOUT SILAI', size: '2.20M X 63"', opening_pisc: 1, recv_pisc: 0, issues_pisc: 0, closing_pisc: 1, so_no: '', receiver_name: '' },
+          { category: 'BROWN BELT', belt_stock: 'CROSS JOINT', size: '97" X 63"', opening_pisc: 0, recv_pisc: 0, issues_pisc: 0, closing_pisc: 0, so_no: '', receiver_name: '' },
+          { category: 'BROWN BELT', belt_stock: 'WITHOUT SILAI', size: '2.12M X 63"', opening_pisc: 1, recv_pisc: 0, issues_pisc: 0, closing_pisc: 1, so_no: '', receiver_name: '' },
+          { category: 'BROWN BELT', belt_stock: 'WITHOUT SILAI', size: '97" X 59"', opening_pisc: 1, recv_pisc: 0, issues_pisc: 0, closing_pisc: 1, so_no: '', receiver_name: '' },
+          // BLACK BELT
+          { category: 'BLACK BELT', belt_stock: 'SILAI BELT', size: '97" X 63"', opening_pisc: 7, recv_pisc: 0, issues_pisc: 3, closing_pisc: 4, so_no: '11673 11728', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '97" X 63"', opening_pisc: 3, recv_pisc: 0, issues_pisc: 1, closing_pisc: 2, so_no: '11574', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'CROSS JOINT', size: '97" X 63"', opening_pisc: 3, recv_pisc: 0, issues_pisc: 0, closing_pisc: 3, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '2.65 M X 63"', opening_pisc: 2, recv_pisc: 0, issues_pisc: 0, closing_pisc: 2, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'SILAI BELT', size: '85" X 63"', opening_pisc: 1, recv_pisc: 0, issues_pisc: 0, closing_pisc: 1, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '2.77M X 63"', opening_pisc: 0, recv_pisc: 0, issues_pisc: 0, closing_pisc: 0, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '2.78M X 63"', opening_pisc: 4, recv_pisc: 0, issues_pisc: 0, closing_pisc: 4, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '3.03M X 63"', opening_pisc: 3, recv_pisc: 0, issues_pisc: 0, closing_pisc: 3, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '2.91M X 63"', opening_pisc: 6, recv_pisc: 0, issues_pisc: 0, closing_pisc: 6, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '85" X 63"', opening_pisc: 2, recv_pisc: 0, issues_pisc: 0, closing_pisc: 2, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '3.14M X 63INCH', opening_pisc: 0, recv_pisc: 0, issues_pisc: 0, closing_pisc: 0, so_no: '', receiver_name: '' }
+        ];
+
+        for (let idx = 0; idx < seedData.length; idx++) {
+          const item = seedData[idx];
+          const id = `ready-${Date.now()}-${idx}`;
+          await pool.query(
+            `INSERT INTO ready_belt_stocks 
+             (id, category, belt_stock, size, opening_pisc, recv_pisc, issues_pisc, closing_pisc, so_no, receiver_name) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [id, item.category, item.belt_stock, item.size, item.opening_pisc, item.recv_pisc, item.issues_pisc, item.closing_pisc, item.so_no, item.receiver_name]
+          );
+        }
+        console.log('Seeded ready_belt_stocks data successfully.');
+      }
+
+      // Ensure details_log column exists and migrate existing rows
+      try {
+        await pool.query(`ALTER TABLE ready_belt_stocks ADD COLUMN IF NOT EXISTS details_log JSONB`);
+        const migrationRes = await pool.query(`
+          UPDATE ready_belt_stocks 
+          SET 
+            opening_pisc = opening_pisc + recv_pisc,
+            details_log = '[]'::jsonb
+          WHERE details_log IS NULL
+        `);
+        if (migrationRes.rowCount > 0) {
+          console.log(`Migrated ${migrationRes.rowCount} ready_belt_stocks rows to new schema (opening = opening + recv).`);
+        }
+      } catch (alterErr) {
+        console.warn('Failed to add details_log column or migrate ready_belt_stocks table:', alterErr);
+      }
+    } catch (rbCheckErr) {
+      console.warn('Failed to create ready_belt_stocks table:', rbCheckErr);
     }
 
     // Create HRMS Departments table
@@ -942,10 +1029,24 @@ const calculateCosting = (data: any, config: any, clientProfitRanges: any[] = []
   subtotal += packingCost;
   breakdown['packing'] = { consumption: 1, rate: manualPackingCost || rates.packing, cost: packingCost };
 
-  const purchaseGstAmount = Math.round(subtotal * (constants.purchaseGst / 100));
+  const selectedCategory = config?.beltTypes?.find?.((t: any) => t.name === data.beltType) || null;
+  
+  // Single GST rate: category-level gst overrides global constants
+  const categoryGst = selectedCategory?.gst !== undefined && selectedCategory.gst !== null
+    ? Number(selectedCategory.gst)
+    : null;
+
+  const applicablePurchaseGst = categoryGst !== null ? categoryGst : constants.purchaseGst;
+  const applicableSaleGst     = categoryGst !== null ? categoryGst : constants.saleGst;
+
+  const applicableFixCost = selectedCategory?.fixCost !== undefined && selectedCategory.fixCost !== null
+    ? Number(selectedCategory.fixCost)
+    : constants.fixCost;
+
+  const purchaseGstAmount = Math.round(subtotal * (applicablePurchaseGst / 100));
   const totalWithPurchaseGst = Math.round(subtotal + purchaseGstAmount);
   
-  const fixCostAmount = Math.round(totalWithPurchaseGst * (constants.fixCost / 100));
+  const fixCostAmount = Math.round(totalWithPurchaseGst * (applicableFixCost / 100));
   const totalWithFixCost = Math.round(totalWithPurchaseGst + fixCostAmount);
   
   // Resolve profit margin based on length ranges
@@ -963,7 +1064,7 @@ const calculateCosting = (data: any, config: any, clientProfitRanges: any[] = []
   const profitAmount = Math.round(totalWithFixCost * (profitMargin / 100));
   const totalWithProfit = Math.round(totalWithFixCost + profitAmount);
 
-  const saleGstAmount = Math.round(totalWithProfit * (constants.saleGst / 100));
+  const saleGstAmount = Math.round(totalWithProfit * (applicableSaleGst / 100));
   const finalTotal = Math.round(totalWithProfit + saleGstAmount);
 
   return {
@@ -971,13 +1072,17 @@ const calculateCosting = (data: any, config: any, clientProfitRanges: any[] = []
     summary: {
       subtotal,
       purchaseGst: purchaseGstAmount,
+      purchaseGstPercent: applicablePurchaseGst,
       totalWithPurchaseGst,
       fixCost: fixCostAmount,
+      fixCostPercentage: applicableFixCost,
       totalWithFixCost,
       profit: profitAmount,
       profitMarginUsed: profitMargin,
       totalWithProfit,
       saleGst: saleGstAmount,
+      saleGstPercent: applicableSaleGst,
+      gstPercent: categoryGst,
       finalTotal
     }
   };
@@ -1871,6 +1976,220 @@ app.delete('/api/material-stocks/:id', async (req: any, res) => {
   }
 });
 
+// Ready Belt Stocks Routes
+app.get('/api/ready-belt-stocks', authenticate, async (req: any, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM ready_belt_stocks ORDER BY category ASC, id ASC');
+    res.json(result.rows.map(row => ({
+      id: row.id,
+      category: row.category,
+      beltStock: row.belt_stock,
+      size: row.size,
+      openingPisc: parseInt(row.opening_pisc, 10) || 0,
+      recvPisc: parseInt(row.recv_pisc, 10) || 0,
+      issuesPisc: parseInt(row.issues_pisc, 10) || 0,
+      closingPisc: parseInt(row.closing_pisc, 10) || 0,
+      soNo: row.so_no || '',
+      receiverName: row.receiver_name || '',
+      detailsLog: row.details_log || []
+    })));
+  } catch (err) {
+    console.error('Failed to get ready belt stocks', err);
+    res.status(500).json({ error: 'Failed to retrieve ready belt stocks' });
+  }
+});
+
+app.post('/api/ready-belt-stocks', authenticate, async (req: any, res) => {
+  try {
+    const { category, beltStock, size, openingPisc, recvPisc, issuesPisc, soNo, receiverName } = req.body;
+    if (!category || !category.trim()) return res.status(400).json({ error: 'Category is required' });
+    if (!beltStock || !beltStock.trim()) return res.status(400).json({ error: 'Belt Stock name is required' });
+    if (!size || !size.trim()) return res.status(400).json({ error: 'Size is required' });
+
+    const open = parseInt(openingPisc, 10) || 0;
+    const recv = parseInt(recvPisc, 10) || 0;
+    const issue = parseInt(issuesPisc, 10) || 0;
+
+    const actualOpening = open + recv - issue;
+    const closing = actualOpening;
+    const id = 'ready-' + Date.now();
+
+    const timestampStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    const initialLog = {
+      dateTime: timestampStr,
+      username: req.user?.username || 'unknown',
+      name: req.user?.name || 'Unknown User',
+      action: `Created stock with Opening: ${open}${recv > 0 ? `, Recv: ${recv}` : ''}${issue > 0 ? `, Issues: ${issue}` : ''}`,
+      recvQty: recv,
+      issuesQty: issue,
+      soNo: (soNo || '').trim() || '-',
+      receiverName: (receiverName || '').trim() || '-',
+      openingQty: open
+    };
+    const detailsLog = JSON.stringify([initialLog]);
+
+    await pool.query(
+      `INSERT INTO ready_belt_stocks 
+       (id, category, belt_stock, size, opening_pisc, recv_pisc, issues_pisc, closing_pisc, so_no, receiver_name, details_log) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [id, category.trim(), beltStock.trim(), size.trim(), actualOpening, recv, issue, closing, (soNo || '').trim(), (receiverName || '').trim(), detailsLog]
+    );
+
+    res.json({
+      id,
+      category: category.trim(),
+      beltStock: beltStock.trim(),
+      size: size.trim(),
+      openingPisc: actualOpening,
+      recvPisc: recv,
+      issuesPisc: issue,
+      closingPisc: closing,
+      soNo: (soNo || '').trim(),
+      receiverName: (receiverName || '').trim(),
+      detailsLog: [initialLog]
+    });
+  } catch (err) {
+    console.error('Failed to add ready belt stock', err);
+    res.status(500).json({ error: 'Failed to add ready belt stock' });
+  }
+});
+
+app.put('/api/ready-belt-stocks/:id', authenticate, async (req: any, res) => {
+  try {
+    const { category, beltStock, size, openingPisc, recvPisc, issuesPisc, soNo, receiverName } = req.body;
+    if (!category || !category.trim()) return res.status(400).json({ error: 'Category is required' });
+    if (!beltStock || !beltStock.trim()) return res.status(400).json({ error: 'Belt Stock name is required' });
+    if (!size || !size.trim()) return res.status(400).json({ error: 'Size is required' });
+
+    // Fetch existing record
+    const currentRes = await pool.query('SELECT * FROM ready_belt_stocks WHERE id = $1', [req.params.id]);
+    if (currentRes.rowCount === 0) return res.status(404).json({ error: 'Ready belt stock item not found' });
+    const current = currentRes.rows[0];
+
+    const oldOpening = parseInt(current.opening_pisc, 10) || 0;
+    const oldRecv = parseInt(current.recv_pisc, 10) || 0;
+    const oldIssues = parseInt(current.issues_pisc, 10) || 0;
+    let oldDetailsLog = current.details_log || [];
+    if (typeof oldDetailsLog === 'string') {
+      try {
+        oldDetailsLog = JSON.parse(oldDetailsLog);
+      } catch (e) {
+        oldDetailsLog = [];
+      }
+    }
+
+    const newOpening = parseInt(openingPisc, 10) || 0;
+    const newRecv = parseInt(recvPisc, 10) || 0;
+    const newIssues = parseInt(issuesPisc, 10) || 0;
+
+    const diffRecv = newRecv - oldRecv;
+    const diffIssues = newIssues - oldIssues;
+
+    const isAdmin = req.user?.role === 'admin';
+    let updatedOpening = oldOpening;
+    if (isAdmin) {
+      updatedOpening = newOpening; // Admin can change opening directly
+    }
+    // Any new received quantity is added to opening stock
+    if (diffRecv !== 0) {
+      updatedOpening += diffRecv;
+    }
+    // Any issued quantity is subtracted from opening stock
+    if (diffIssues !== 0) {
+      updatedOpening -= diffIssues;
+    }
+
+    const updatedIssues = newIssues;
+    const closing = updatedOpening;
+
+    // Log changes
+    const changes: string[] = [];
+    if (isAdmin && newOpening !== oldOpening) {
+      changes.push(`Admin changed Opening stock from ${oldOpening} to ${newOpening}`);
+    }
+    if (diffRecv > 0) {
+      changes.push(`Received +${diffRecv} Pcs`);
+    } else if (diffRecv < 0) {
+      changes.push(`Received correction ${diffRecv} Pcs`);
+    }
+    if (diffIssues > 0) {
+      changes.push(`Issued +${diffIssues} Pcs`);
+    } else if (diffIssues < 0) {
+      changes.push(`Issued correction ${diffIssues} Pcs`);
+    }
+
+    if (current.category !== category.trim()) changes.push(`Category changed`);
+    if (current.belt_stock !== beltStock.trim()) changes.push(`Stock name changed`);
+    if (current.size !== size.trim()) changes.push(`Size changed`);
+    if ((current.so_no || '') !== (soNo || '').trim()) changes.push(`SO No updated to ${(soNo || '').trim()}`);
+    if ((current.receiver_name || '') !== (receiverName || '').trim()) changes.push(`Receiver Name updated to ${(receiverName || '').trim()}`);
+
+    let updatedDetailsLog = oldDetailsLog;
+    if (changes.length > 0) {
+      const timestampStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+      const newLog = {
+        dateTime: timestampStr,
+        username: req.user?.username || 'unknown',
+        name: req.user?.name || 'Unknown',
+        action: changes.join(', '),
+        recvQty: diffRecv !== 0 ? diffRecv : undefined,
+        issuesQty: diffIssues !== 0 ? diffIssues : undefined,
+        soNo: (soNo || '').trim() || '-',
+        receiverName: (receiverName || '').trim() || '-',
+        openingQty: oldOpening
+      };
+      updatedDetailsLog = [newLog, ...oldDetailsLog];
+    }
+
+    await pool.query(
+      `UPDATE ready_belt_stocks 
+       SET category = $1, belt_stock = $2, size = $3, opening_pisc = $4, recv_pisc = $5, issues_pisc = $6, closing_pisc = $7, so_no = $8, receiver_name = $9, details_log = $10 
+       WHERE id = $11`,
+      [
+        category.trim(),
+        beltStock.trim(),
+        size.trim(),
+        updatedOpening,
+        newRecv,
+        updatedIssues,
+        closing,
+        (soNo || '').trim(),
+        (receiverName || '').trim(),
+        JSON.stringify(updatedDetailsLog),
+        req.params.id
+      ]
+    );
+
+    res.json({
+      id: req.params.id,
+      category: category.trim(),
+      beltStock: beltStock.trim(),
+      size: size.trim(),
+      openingPisc: updatedOpening,
+      recvPisc: newRecv,
+      issuesPisc: updatedIssues,
+      closingPisc: closing,
+      soNo: (soNo || '').trim(),
+      receiverName: (receiverName || '').trim(),
+      detailsLog: updatedDetailsLog
+    });
+  } catch (err) {
+    console.error('Failed to update ready belt stock', err);
+    res.status(500).json({ error: 'Failed to update ready belt stock' });
+  }
+});
+
+app.delete('/api/ready-belt-stocks/:id', authenticate, async (req: any, res) => {
+  try {
+    await pool.query('DELETE FROM ready_belt_stocks WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to delete ready belt stock', err);
+    res.status(500).json({ error: 'Failed to delete ready belt stock' });
+  }
+});
+
+
 // ─── Material Issues / Production Log Routes ──────────────────────────────
 
 app.get('/api/material-issues', async (req, res) => {
@@ -1884,6 +2203,7 @@ app.get('/api/material-issues', async (req, res) => {
       unit: row.unit,
       issuedTo: row.issued_to,
       notes: row.notes || '',
+      lotNumber: row.lot_number || '',
       issuedAt: row.issued_at
     })));
   } catch (err) {
@@ -1894,7 +2214,7 @@ app.get('/api/material-issues', async (req, res) => {
 
 app.post('/api/material-issues', async (req: any, res) => {
   try {
-    const { materialId, materialName, quantity, unit, issuedTo, notes } = req.body;
+    const { materialId, materialName, quantity, unit, issuedTo, notes, lotNumber } = req.body;
     if (!materialName || !issuedTo) return res.status(400).json({ error: 'Material name and issued-to are required' });
     if (!quantity || quantity <= 0) return res.status(400).json({ error: 'Quantity must be greater than 0' });
 
@@ -1915,10 +2235,16 @@ app.post('/api/material-issues', async (req: any, res) => {
         if (lots && lots.length > 0) {
           let remainingToIssue = qtyToIssue;
           const isInt = Number.isInteger(qtyToIssue);
+          
+          // Filter to target lot if specified
+          const targetLots = lotNumber 
+            ? lots.filter((l: any) => l.lotNumber === lotNumber)
+            : lots;
+
           if (isInt) {
-            for (let i = 0; i < lots.length; i++) {
+            for (let i = 0; i < targetLots.length; i++) {
               if (remainingToIssue <= 0) break;
-              const lot = lots[i];
+              const lot = targetLots[i];
               if (lot.pieces && lot.pieces.length > 0) {
                 const piecesCount = lot.pieces.length;
                 if (piecesCount <= remainingToIssue) {
@@ -1931,9 +2257,9 @@ app.post('/api/material-issues', async (req: any, res) => {
               }
             }
           } else {
-            for (let i = 0; i < lots.length; i++) {
+            for (let i = 0; i < targetLots.length; i++) {
               if (remainingToIssue <= 0) break;
-              const lot = lots[i];
+              const lot = targetLots[i];
               if (lot.pieces && lot.pieces.length > 0) {
                 while (lot.pieces.length > 0 && remainingToIssue > 0) {
                   const firstPiece = lot.pieces[0];
@@ -1951,6 +2277,16 @@ app.post('/api/material-issues', async (req: any, res) => {
               }
             }
           }
+
+          // Merge targetLots back into lots
+          if (lotNumber) {
+            lots = lots.map((l: any) => {
+              if (l.lotNumber === lotNumber) {
+                return targetLots.find((tl: any) => tl.lotNumber === lotNumber) || l;
+              }
+              return l;
+            });
+          }
           lots = lots.filter((l: any) => l.pieces && l.pieces.length > 0);
         }
 
@@ -1960,10 +2296,10 @@ app.post('/api/material-issues', async (req: any, res) => {
 
     const id = 'issue-' + Date.now();
     await pool.query(
-      'INSERT INTO material_issues (id, material_id, material_name, quantity, unit, issued_to, notes) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [id, materialId || '', materialName, parseFloat(quantity), unit || 'pcs', issuedTo.trim(), notes || '']
+      'INSERT INTO material_issues (id, material_id, material_name, quantity, unit, issued_to, notes, lot_number) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [id, materialId || '', materialName, parseFloat(quantity), unit || 'pcs', issuedTo.trim(), notes || '', lotNumber || null]
     );
-    res.json({ id, materialId: materialId || '', materialName, quantity: parseFloat(quantity), unit: unit || 'pcs', issuedTo: issuedTo.trim(), notes: notes || '', issuedAt: new Date().toISOString() });
+    res.json({ id, materialId: materialId || '', materialName, quantity: parseFloat(quantity), unit: unit || 'pcs', issuedTo: issuedTo.trim(), notes: notes || '', lotNumber: lotNumber || '', issuedAt: new Date().toISOString() });
   } catch (err) {
     console.error('Failed to create material issue', err);
     res.status(500).json({ error: 'Failed to issue material' });
@@ -1984,15 +2320,15 @@ app.delete('/api/material-issues/:id', async (req: any, res) => {
 
 app.post('/api/material-requests', async (req: any, res) => {
   try {
-    const { materialId, materialName, requestedQuantity, unit, requestedBy, notes } = req.body;
+    const { materialId, materialName, requestedQuantity, unit, requestedBy, notes, lotNumber } = req.body;
     if (!materialName || !requestedQuantity || !requestedBy) {
       return res.status(400).json({ error: 'Material name, quantity, and requester name are required' });
     }
     const id = 'req-' + Date.now();
     await pool.query(
-      `INSERT INTO material_requests (id, material_id, material_name, requested_quantity, unit, requested_by, notes) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [id, materialId || null, materialName.trim(), parseFloat(requestedQuantity), (unit || 'pcs').trim(), requestedBy.trim(), notes || '']
+      `INSERT INTO material_requests (id, material_id, material_name, requested_quantity, unit, requested_by, notes, lot_number) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [id, materialId || null, materialName.trim(), parseFloat(requestedQuantity), (unit || 'pcs').trim(), requestedBy.trim(), notes || '', lotNumber || null]
     );
     res.json({ id, success: true });
   } catch (err) {
@@ -2024,6 +2360,7 @@ app.get('/api/material-requests', async (req, res) => {
       approvedQuantity: row.approved_quantity ? parseFloat(row.approved_quantity) : null,
       approvedBy: row.approved_by || '',
       approvalNotes: row.approval_notes || '',
+      lotNumber: row.lot_number || '',
       requestedAt: row.requested_at,
       approvedAt: row.approved_at
     })));
@@ -2035,7 +2372,7 @@ app.get('/api/material-requests', async (req, res) => {
 
 app.post('/api/material-requests/:id/approve', async (req: any, res) => {
   const { id } = req.params;
-  const { approvedQuantity, approvalNotes, approvedBy } = req.body;
+  const { approvedQuantity, approvalNotes, approvedBy, lotNumber } = req.body;
   if (approvedQuantity === undefined || isNaN(approvedQuantity) || parseFloat(approvedQuantity) <= 0) {
     return res.status(400).json({ error: 'Valid approved quantity is required' });
   }
@@ -2055,9 +2392,9 @@ app.post('/api/material-requests/:id/approve', async (req: any, res) => {
 
     await pool.query(
       `UPDATE material_requests 
-       SET status = 'approved', approved_quantity = $1, approved_by = $2, approval_notes = $3, approved_at = CURRENT_TIMESTAMP
-       WHERE id = $4`,
-      [appQty, appBy, appNotes, id]
+       SET status = 'approved', approved_quantity = $1, approved_by = $2, approval_notes = $3, lot_number = $4, approved_at = CURRENT_TIMESTAMP
+       WHERE id = $5`,
+      [appQty, appBy, appNotes, lotNumber || null, id]
     );
 
     const materialId = request.material_id;
@@ -2077,10 +2414,16 @@ app.post('/api/material-requests/:id/approve', async (req: any, res) => {
         if (lots && lots.length > 0) {
           let remainingToIssue = appQty;
           const isInt = Number.isInteger(appQty);
+          
+          // Filter to target lot if specified
+          const targetLots = lotNumber 
+            ? lots.filter((l: any) => l.lotNumber === lotNumber)
+            : lots;
+
           if (isInt) {
-            for (let i = 0; i < lots.length; i++) {
+            for (let i = 0; i < targetLots.length; i++) {
               if (remainingToIssue <= 0) break;
-              const lot = lots[i];
+              const lot = targetLots[i];
               if (lot.pieces && lot.pieces.length > 0) {
                 const piecesCount = lot.pieces.length;
                 if (piecesCount <= remainingToIssue) {
@@ -2093,9 +2436,9 @@ app.post('/api/material-requests/:id/approve', async (req: any, res) => {
               }
             }
           } else {
-            for (let i = 0; i < lots.length; i++) {
+            for (let i = 0; i < targetLots.length; i++) {
               if (remainingToIssue <= 0) break;
-              const lot = lots[i];
+              const lot = targetLots[i];
               if (lot.pieces && lot.pieces.length > 0) {
                 while (lot.pieces.length > 0 && remainingToIssue > 0) {
                   const firstPiece = lot.pieces[0];
@@ -2113,6 +2456,16 @@ app.post('/api/material-requests/:id/approve', async (req: any, res) => {
               }
             }
           }
+
+          // Merge targetLots back into lots
+          if (lotNumber) {
+            lots = lots.map((l: any) => {
+              if (l.lotNumber === lotNumber) {
+                return targetLots.find((tl: any) => tl.lotNumber === lotNumber) || l;
+              }
+              return l;
+            });
+          }
           lots = lots.filter((l: any) => l.pieces && l.pieces.length > 0);
         }
 
@@ -2125,9 +2478,9 @@ app.post('/api/material-requests/:id/approve', async (req: any, res) => {
     const issueNote = `Approved Qty: ${appQty} (Requested: ${request.requested_quantity}). Note: ${appNotes}`;
 
     await pool.query(
-      `INSERT INTO material_issues (id, material_id, material_name, quantity, unit, issued_to, notes, issued_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
-      [issueId, materialId || '', request.material_name, appQty, request.unit || 'pcs', issuedTo, issueNote]
+      `INSERT INTO material_issues (id, material_id, material_name, quantity, unit, issued_to, notes, lot_number, issued_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)`,
+      [issueId, materialId || '', request.material_name, appQty, request.unit || 'pcs', issuedTo, issueNote, lotNumber || null]
     );
 
     res.json({ success: true });
@@ -2543,9 +2896,25 @@ app.post('/api/quotations/:id/smart-cut', authenticate, async (req: any, res) =>
 // Quotations Routes
 app.get('/api/quotations', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM quotations');
+    const { clientId, clientName } = req.query as { clientId?: string; clientName?: string };
+
+    let query = 'SELECT * FROM quotations';
+    const params: any[] = [];
+
+    if (clientId) {
+      query += ' WHERE client_id = $1';
+      params.push(clientId);
+    } else if (clientName) {
+      query += ' WHERE LOWER(client_name) = LOWER($1)';
+      params.push(clientName);
+    }
+
+    query += ' ORDER BY created_at DESC';
+
+    const result = await pool.query(query, params);
     const quotations = result.rows.map(row => ({
       id: row.id,
+      orderNumber: row.order_number,
       clientId: row.client_id,
       clientName: row.client_name,
       beltType: row.belt_type,

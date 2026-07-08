@@ -59,6 +59,7 @@ export interface BeltType {
   name: string;
   styles: BeltStyle[];
   fixCost?: number;
+  gst?: number;
 }
 
 export interface Config {
