@@ -121,6 +121,17 @@ const calculatePrecisionScore = (roll: Roll, order: Order, placement: { x: numbe
   // Every meter further into the roll reduces the score
   score -= (x * 100);
 
+  // 1.5. Roll Extension Penalty (Prefer filling the roll width/columns first before moving along the length)
+  const currentMaxX = roll.cuts.length > 0 
+    ? Math.max(...roll.cuts.map(c => c.x + c.length)) 
+    : 0;
+  const newMaxX = x + requiredLength;
+  const extension = Math.max(0, newMaxX - currentMaxX);
+  if (extension > 0.01) {
+    score -= (extension * 5000);
+    reasons.push(`Extends roll length by ${extension.toFixed(2)}m`);
+  }
+
   // 2. Edge Alignment (Top or Bottom)
   const hitsTopEdge = Math.abs(y) < 0.01;
   const hitsBottomEdge = Math.abs((y + requiredWidth) - roll.fullWidth) < 0.01;
