@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Client, Config, ProfitRange, Quotation } from '../types';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
@@ -12,7 +12,7 @@ import {
   UserPlus, Trash2, Upload, Download, Search, Edit2, Save, X,
   Phone, MapPin, Building2, TrendingUp, FileText, Clock,
   CheckCircle2, XCircle, ShoppingCart, ChevronRight, Package,
-  RotateCcw, User
+  RotateCcw, User, Filter, Check
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
@@ -561,6 +561,16 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
   const [isAdding, setIsAdding] = useState(false);
   const [formData, setFormData] = useState({ name: '', company: '', city: '', mobile: '' });
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [cityFilter, setCityFilter] = useState('All');
+  const [showCityFilterDropdown, setShowCityFilterDropdown] = useState(false);
+
+  const uniqueCities = useMemo(() => {
+    const cities = clients.map(c => c.city.trim()).filter(Boolean);
+    const unique = Array.from(new Set(cities.map(c => c.toLowerCase()))).map(c => {
+      return cities.find(original => original.toLowerCase() === c) || c;
+    });
+    return ['All', ...unique.sort()];
+  }, [clients]);
 
   const handleAddClient = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -705,12 +715,15 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
     e.target.value = '';
   };
 
-  const filteredClients = clients.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    c.company.toLowerCase().includes(search.toLowerCase()) ||
-    c.city.toLowerCase().includes(search.toLowerCase()) ||
-    (c.mobile || '').includes(search)
-  );
+  const filteredClients = clients.filter(c => {
+    const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase()) ||
+      c.company.toLowerCase().includes(search.toLowerCase()) ||
+      c.city.toLowerCase().includes(search.toLowerCase()) ||
+      (c.mobile || '').includes(search);
+    
+    const matchesCity = cityFilter === 'All' || c.city.toLowerCase() === cityFilter.toLowerCase();
+    return matchesSearch && matchesCity;
+  });
 
   return (
     <div className="space-y-5">
@@ -730,7 +743,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
             <input type="file" accept=".csv" className="hidden" onChange={handleBulkUpload} />
           </label>
           <Button variant="outline" className="gap-1.5 h-8 text-xs px-3 shadow-sm" onClick={() => {
-            const csv = 'Name,Company,City,DefaultProfit\nJohn Doe,ABC Industries,Mumbai,25\nJane Smith,XYZ Corp,Delhi,18';
+            const csv = 'Name,Company,City,Mobile,DefaultProfit\nSUN ENGINEERING WORKS,SUN ENGINEERING WORKS,SURAT,7046475153,20\nNilesh soni,ptb,surat,9879022753,20';
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a'); a.href = url; a.download = 'clients_template.csv'; a.click();
@@ -805,9 +818,37 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                   <thead className="bg-zinc-50 font-bold uppercase tracking-wider text-zinc-500 text-[10px]">
                     <tr>
                       <th scope="col" className="px-4 py-3">Client / Company</th>
-                      <th scope="col" className="px-4 py-3">City</th>
+                      <th scope="col" className="px-4 py-3 relative">
+                        <div className="flex items-center gap-1.5 cursor-pointer select-none" onClick={() => setShowCityFilterDropdown(!showCityFilterDropdown)}>
+                          <span>City</span>
+                          <Filter className={cn("h-3 w-3 transition", cityFilter !== 'All' ? "text-blue-600 fill-blue-50" : "text-zinc-400")} />
+                        </div>
+                        {showCityFilterDropdown && (
+                          <>
+                            <div className="fixed inset-0 z-10" onClick={() => setShowCityFilterDropdown(false)} />
+                            <div className="absolute left-4 top-9 z-20 min-w-[140px] bg-white border border-zinc-200 rounded-xl shadow-lg py-1.5 text-xs font-bold text-zinc-750 normal-case tracking-normal animate-in fade-in duration-100">
+                              <div className="px-2.5 py-1 text-[9px] font-black text-zinc-400 uppercase tracking-wider border-b border-zinc-100">Filter City</div>
+                              {uniqueCities.map(city => (
+                                <button
+                                  key={city}
+                                  onClick={() => {
+                                    setCityFilter(city);
+                                    setShowCityFilterDropdown(false);
+                                  }}
+                                  className={cn(
+                                    "w-full text-left px-3 py-1.5 hover:bg-zinc-50 flex items-center justify-between",
+                                    cityFilter === city && "text-blue-600 bg-blue-50/50"
+                                  )}
+                                >
+                                  <span>{city}</span>
+                                  {cityFilter === city && <Check className="h-3 w-3" />}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </th>
                       <th scope="col" className="px-4 py-3">Mobile</th>
-                      <th scope="col" className="px-4 py-3">GSTIN</th>
                       <th scope="col" className="px-4 py-3">Profit Margins</th>
                       <th scope="col" className="px-4 py-3 text-right">Actions</th>
                     </tr>
@@ -832,7 +873,6 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                         </td>
                         <td className="px-4 py-3.5 text-zinc-600 font-semibold">{c.city}</td>
                         <td className="px-4 py-3.5 text-zinc-500 font-mono">{c.mobile || '-'}</td>
-                        <td className="px-4 py-3.5 text-zinc-400 font-mono text-[10px]">{c.gstin || '-'}</td>
                         <td className="px-4 py-3.5">
                           <div className="flex flex-wrap gap-1">
                             {(Array.isArray(config?.beltTypes) ? config.beltTypes : []).slice(0, 3).map(type => {
