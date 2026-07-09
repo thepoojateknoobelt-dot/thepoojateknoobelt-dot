@@ -7,7 +7,7 @@ import { Label } from './ui/label';
 import { Button } from './ui/button';
 import { formatCurrency, cn } from '../lib/utils';
 import { calculateCosting } from '../lib/calculations';
-import { Calendar, Download, Printer, TrendingUp, IndianRupee, Building2, ShoppingBag, Percent, BarChart3, AlertCircle } from 'lucide-react';
+import { Calendar, Download, Printer, TrendingUp, IndianRupee, Building2, ShoppingBag, Percent, BarChart3, AlertCircle, Package, Layers, HelpCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from './ui/dialog';
 import { Badge } from './ui/badge';
@@ -32,10 +32,21 @@ const formatLocalDate = (date: Date): string => {
 export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
-  const [activeReportCard, setActiveReportCard] = useState<'purchase' | 'profitability' | 'company' | null>(null);
+  const [activeReportCard, setActiveReportCard] = useState<'purchase' | 'profitability' | 'company' | 'inventory' | null>(null);
   const [selectedPreset, setSelectedPreset] = useState<string>('this-month');
   const [selectedCompany, setSelectedCompany] = useState<string>('all');
   const [selectedOrderForModal, setSelectedOrderForModal] = useState<Quotation | null>(null);
+
+  // Date range dialog state
+  const [showDateRangeDialog, setShowDateRangeDialog] = useState(false);
+  const [pendingReportCard, setPendingReportCard] = useState<'purchase' | 'profitability' | 'company' | 'inventory' | null>(null);
+  const [dialogStartDate, setDialogStartDate] = useState<string>('');
+  const [dialogEndDate, setDialogEndDate] = useState<string>('');
+  const [dialogPreset, setDialogPreset] = useState<string>('this-month');
+
+  // Inventory (rolls) state
+  const [rolls, setRolls] = useState<any[]>([]);
+  const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
 
   // Default date range: current month start to today
   const [startDate, setStartDate] = useState<string>(() => {
@@ -94,18 +105,71 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
   useEffect(() => {
     fetch('/api/quotations')
       .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) setQuotations(data);
-      })
+      .then(data => { if (Array.isArray(data)) setQuotations(data); })
       .catch(err => console.error('Failed to fetch quotations in reports:', err));
 
     fetch('/api/companies')
       .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) setCompanies(data);
-      })
+      .then(data => { if (Array.isArray(data)) setCompanies(data); })
       .catch(err => console.error('Failed to fetch companies in reports:', err));
+
+    fetch('/api/rolls')
+      .then(res => res.json())
+      .then(data => { if (Array.isArray(data)) setRolls(data); })
+      .catch(err => console.error('Failed to fetch rolls in reports:', err));
   }, []);
+
+  // Helper: open date range dialog for a specific report
+  const openReportWithDatePicker = (card: 'purchase' | 'profitability' | 'company' | 'inventory') => {
+    setPendingReportCard(card);
+    const today = new Date();
+    const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    setDialogStartDate(formatLocalDate(firstOfMonth));
+    setDialogEndDate(formatLocalDate(today));
+    setDialogPreset('this-month');
+    setShowDateRangeDialog(true);
+  };
+
+  const handleDialogPreset = (preset: string) => {
+    setDialogPreset(preset);
+    const today = new Date();
+    let start = new Date(), end = new Date();
+    switch (preset) {
+      case 'today': start = end = new Date(today.getFullYear(), today.getMonth(), today.getDate()); break;
+      case 'yesterday': start = end = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1); break;
+      case 'this-week': { const d = today.getDay(); const diff = today.getDate() - d + (d === 0 ? -6 : 1); start = new Date(today.getFullYear(), today.getMonth(), diff); end = new Date(); break; }
+      case 'this-month': start = new Date(today.getFullYear(), today.getMonth(), 1); end = new Date(); break;
+      case 'last-month': start = new Date(today.getFullYear(), today.getMonth() - 1, 1); end = new Date(today.getFullYear(), today.getMonth(), 0); break;
+      case 'last-30-days': start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30); end = new Date(); break;
+      default: return;
+    }
+    setDialogStartDate(formatLocalDate(start));
+    setDialogEndDate(formatLocalDate(end));
+  };
+
+  const confirmReportDateRange = () => {
+    if (!dialogStartDate || !dialogEndDate) { toast.error('Please select both start and end dates.'); return; }
+    setStartDate(dialogStartDate);
+    setEndDate(dialogEndDate);
+    setSelectedPreset(dialogPreset);
+    setActiveReportCard(pendingReportCard);
+    setSelectedCompany('all');
+    setShowDateRangeDialog(false);
+  };
+
+  // Inventory: group rolls by materialType
+  const inventoryByProduct = useMemo((): Record<string, { rolls: any[]; totalRemaining: number; totalSqm: number }> => {
+    const active = rolls.filter(r => !r.isArchived && r.status !== 'refused');
+    const map: Record<string, { rolls: any[]; totalRemaining: number; totalSqm: number }> = {};
+    active.forEach(r => {
+      const key = r.materialType || 'Unknown';
+      if (!map[key]) map[key] = { rolls: [], totalRemaining: 0, totalSqm: 0 };
+      map[key].rolls.push(r);
+      map[key].totalRemaining += r.remainingSqm || 0;
+      map[key].totalSqm += r.totalSqm || 0;
+    });
+    return map;
+  }, [rolls]);
 
   // Filter orders and calculate costs on-the-fly
   const filteredOrders = useMemo(() => {
@@ -427,6 +491,9 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
     printWindow.document.close();
   };
 
+  const inventoryEntries = Object.entries(inventoryByProduct) as [string, { rolls: any[]; totalRemaining: number; totalSqm: number }][];
+  const inventoryValues = Object.values(inventoryByProduct) as { rolls: any[]; totalRemaining: number; totalSqm: number }[];
+
   return (
     <div className="space-y-6 w-full pb-8">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-200 pb-4">
@@ -518,126 +585,143 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
         </CardContent>
       </Card>
 
-      {/* ── TOP: Four dynamic navigation cards ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      {/* ── TOP: Five dynamic navigation cards ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         
         {/* Card 0: Overview Dashboard */}
-        <button
-          type="button"
-          onClick={() => {
-            setActiveReportCard(null);
-            setSelectedCompany('all');
-          }}
-          className={`group w-full text-left p-5 rounded-2xl border-2 transition-all duration-305 cursor-pointer flex items-center gap-4 shadow-sm hover:shadow-md ${
-            activeReportCard === null
-              ? 'bg-zinc-950 border-zinc-950 text-white shadow-lg scale-[1.01]'
-              : 'bg-white border-zinc-200 text-zinc-850 hover:border-zinc-400 hover:bg-zinc-50/50'
-          }`}
-        >
-          <div className={`p-3 rounded-xl shrink-0 transition-transform group-hover:scale-110 ${activeReportCard === null ? 'bg-white/10' : 'bg-zinc-100'}`}>
-            <BarChart3 size={20} className={activeReportCard === null ? 'text-white' : 'text-zinc-700'} />
+        <button type="button" onClick={() => { setActiveReportCard(null); setSelectedCompany('all'); }}
+          className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-3 shadow-sm hover:shadow-md ${
+            activeReportCard === null ? 'bg-zinc-950 border-zinc-950 text-white shadow-lg scale-[1.01]' : 'bg-white border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50/50'
+          }`}>
+          <div className={`p-2.5 rounded-xl shrink-0 transition-transform group-hover:scale-110 ${activeReportCard === null ? 'bg-white/10' : 'bg-zinc-100'}`}>
+            <BarChart3 size={18} className={activeReportCard === null ? 'text-white' : 'text-zinc-700'} />
           </div>
           <div>
-            <p className={`text-[9px] font-black uppercase tracking-wider ${activeReportCard === null ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              Main
-            </p>
-            <h3 className={`text-base font-black leading-snug mt-0.5 ${activeReportCard === null ? 'text-white' : 'text-zinc-950'}`}>
-              Overview
-            </h3>
-            <p className={`text-[9px] font-bold mt-1 leading-normal ${activeReportCard === null ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              Dashboard summary & KPIs
-            </p>
+            <p className={`text-[9px] font-black uppercase tracking-wider ${activeReportCard === null ? 'text-zinc-400' : 'text-zinc-500'}`}>Main</p>
+            <h3 className={`text-sm font-black leading-snug mt-0.5 ${activeReportCard === null ? 'text-white' : 'text-zinc-950'}`}>Overview</h3>
+            <p className={`text-[9px] font-bold mt-0.5 leading-normal ${activeReportCard === null ? 'text-zinc-400' : 'text-zinc-500'}`}>Dashboard & KPIs</p>
           </div>
         </button>
 
         {/* Card 1: Purchase Cost */}
-        <button
-          type="button"
-          onClick={() => {
-            setActiveReportCard('purchase');
-            setSelectedCompany('all');
-          }}
-          className={`group w-full text-left p-5 rounded-2xl border-2 transition-all duration-305 cursor-pointer flex items-center gap-4 shadow-sm hover:shadow-md ${
-            activeReportCard === 'purchase'
-              ? 'bg-zinc-950 border-zinc-950 text-white shadow-lg scale-[1.01]'
-              : 'bg-white border-zinc-200 text-zinc-855 hover:border-zinc-400 hover:bg-zinc-50/50'
-          }`}
-        >
-          <div className={`p-3 rounded-xl shrink-0 transition-transform group-hover:scale-110 ${activeReportCard === 'purchase' ? 'bg-white/10' : 'bg-zinc-100'}`}>
-            <IndianRupee size={20} className={activeReportCard === 'purchase' ? 'text-white' : 'text-zinc-700'} />
+        <button type="button" onClick={() => openReportWithDatePicker('purchase')}
+          className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-3 shadow-sm hover:shadow-md ${
+            activeReportCard === 'purchase' ? 'bg-zinc-950 border-zinc-950 text-white shadow-lg scale-[1.01]' : 'bg-white border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50/50'
+          }`}>
+          <div className={`p-2.5 rounded-xl shrink-0 transition-transform group-hover:scale-110 ${activeReportCard === 'purchase' ? 'bg-white/10' : 'bg-zinc-100'}`}>
+            <IndianRupee size={18} className={activeReportCard === 'purchase' ? 'text-white' : 'text-zinc-700'} />
           </div>
           <div>
-            <p className={`text-[9px] font-black uppercase tracking-wider ${activeReportCard === 'purchase' ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              Report #1
-            </p>
-            <h3 className={`text-base font-black leading-snug mt-0.5 ${activeReportCard === 'purchase' ? 'text-white' : 'text-zinc-950'}`}>
-              Purchase Cost
-            </h3>
-            <p className={`text-[9px] font-bold mt-1 leading-normal ${activeReportCard === 'purchase' ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              Material cost breakdown
-            </p>
+            <p className={`text-[9px] font-black uppercase tracking-wider ${activeReportCard === 'purchase' ? 'text-zinc-400' : 'text-zinc-500'}`}>Report #1</p>
+            <h3 className={`text-sm font-black leading-snug mt-0.5 ${activeReportCard === 'purchase' ? 'text-white' : 'text-zinc-950'}`}>Purchase Cost</h3>
+            <p className={`text-[9px] font-bold mt-0.5 leading-normal ${activeReportCard === 'purchase' ? 'text-zinc-400' : 'text-zinc-500'}`}>Material cost</p>
           </div>
         </button>
 
         {/* Card 2: Order Profitability */}
-        <button
-          type="button"
-          onClick={() => {
-            setActiveReportCard('profitability');
-            setSelectedCompany('all');
-          }}
-          className={`group w-full text-left p-5 rounded-2xl border-2 transition-all duration-305 cursor-pointer flex items-center gap-4 shadow-sm hover:shadow-md ${
-            activeReportCard === 'profitability'
-              ? 'bg-emerald-700 border-emerald-700 text-white shadow-lg scale-[1.01]'
-              : 'bg-white border-zinc-200 text-zinc-855 hover:border-emerald-400 hover:bg-zinc-50/50'
-          }`}
-        >
-          <div className={`p-3 rounded-xl shrink-0 transition-transform group-hover:scale-110 ${activeReportCard === 'profitability' ? 'bg-white/15' : 'bg-emerald-50'}`}>
-            <TrendingUp size={20} className={activeReportCard === 'profitability' ? 'text-white' : 'text-emerald-700'} />
+        <button type="button" onClick={() => openReportWithDatePicker('profitability')}
+          className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-3 shadow-sm hover:shadow-md ${
+            activeReportCard === 'profitability' ? 'bg-emerald-700 border-emerald-700 text-white shadow-lg scale-[1.01]' : 'bg-white border-zinc-200 hover:border-emerald-400 hover:bg-zinc-50/50'
+          }`}>
+          <div className={`p-2.5 rounded-xl shrink-0 transition-transform group-hover:scale-110 ${activeReportCard === 'profitability' ? 'bg-white/15' : 'bg-emerald-50'}`}>
+            <TrendingUp size={18} className={activeReportCard === 'profitability' ? 'text-white' : 'text-emerald-700'} />
           </div>
           <div>
-            <p className={`text-[9px] font-black uppercase tracking-wider ${activeReportCard === 'profitability' ? 'text-emerald-100' : 'text-zinc-500'}`}>
-              Report #2
-            </p>
-            <h3 className={`text-base font-black leading-snug mt-0.5 ${activeReportCard === 'profitability' ? 'text-white' : 'text-zinc-950'}`}>
-              Order Profitability
-            </h3>
-            <p className={`text-[9px] font-bold mt-1 leading-normal ${activeReportCard === 'profitability' ? 'text-emerald-100' : 'text-zinc-500'}`}>
-              Base price & profit margins
-            </p>
+            <p className={`text-[9px] font-black uppercase tracking-wider ${activeReportCard === 'profitability' ? 'text-emerald-100' : 'text-zinc-500'}`}>Report #2</p>
+            <h3 className={`text-sm font-black leading-snug mt-0.5 ${activeReportCard === 'profitability' ? 'text-white' : 'text-zinc-950'}`}>Profitability</h3>
+            <p className={`text-[9px] font-bold mt-0.5 leading-normal ${activeReportCard === 'profitability' ? 'text-emerald-100' : 'text-zinc-500'}`}>Profit margins</p>
           </div>
         </button>
 
         {/* Card 3: Company Sales */}
-        <button
-          type="button"
-          onClick={() => {
-            setActiveReportCard('company');
-            setSelectedCompany('all');
-          }}
-          className={`group w-full text-left p-5 rounded-2xl border-2 transition-all duration-305 cursor-pointer flex items-center gap-4 shadow-sm hover:shadow-md ${
-            activeReportCard === 'company'
-              ? 'bg-indigo-700 border-indigo-700 text-white shadow-lg scale-[1.01]'
-              : 'bg-white border-zinc-200 text-zinc-855 hover:border-indigo-400 hover:bg-zinc-50/50'
-          }`}
-        >
-          <div className={`p-3 rounded-xl shrink-0 transition-transform group-hover:scale-110 ${activeReportCard === 'company' ? 'bg-white/15' : 'bg-indigo-50'}`}>
-            <Building2 size={20} className={activeReportCard === 'company' ? 'text-white' : 'text-indigo-700'} />
+        <button type="button" onClick={() => openReportWithDatePicker('company')}
+          className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-3 shadow-sm hover:shadow-md ${
+            activeReportCard === 'company' ? 'bg-indigo-700 border-indigo-700 text-white shadow-lg scale-[1.01]' : 'bg-white border-zinc-200 hover:border-indigo-400 hover:bg-zinc-50/50'
+          }`}>
+          <div className={`p-2.5 rounded-xl shrink-0 transition-transform group-hover:scale-110 ${activeReportCard === 'company' ? 'bg-white/15' : 'bg-indigo-50'}`}>
+            <Building2 size={18} className={activeReportCard === 'company' ? 'text-white' : 'text-indigo-700'} />
           </div>
           <div>
-            <p className={`text-[9px] font-black uppercase tracking-wider ${activeReportCard === 'company' ? 'text-indigo-100' : 'text-zinc-500'}`}>
-              Report #3
-            </p>
-            <h3 className={`text-base font-black leading-snug mt-0.5 ${activeReportCard === 'company' ? 'text-white' : 'text-zinc-950'}`}>
-              Company Sales
-            </h3>
-            <p className={`text-[9px] font-bold mt-1 leading-normal ${activeReportCard === 'company' ? 'text-indigo-100' : 'text-zinc-500'}`}>
-              Totals by company units
-            </p>
+            <p className={`text-[9px] font-black uppercase tracking-wider ${activeReportCard === 'company' ? 'text-indigo-100' : 'text-zinc-500'}`}>Report #3</p>
+            <h3 className={`text-sm font-black leading-snug mt-0.5 ${activeReportCard === 'company' ? 'text-white' : 'text-zinc-950'}`}>Company Sales</h3>
+            <p className={`text-[9px] font-bold mt-0.5 leading-normal ${activeReportCard === 'company' ? 'text-indigo-100' : 'text-zinc-500'}`}>By company</p>
+          </div>
+        </button>
+
+        {/* Card 4: Inventory / Roll Balance */}
+        <button type="button" onClick={() => { setActiveReportCard('inventory'); setSelectedCompany('all'); }}
+          className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-3 shadow-sm hover:shadow-md ${
+            activeReportCard === 'inventory' ? 'bg-amber-600 border-amber-600 text-white shadow-lg scale-[1.01]' : 'bg-white border-zinc-200 hover:border-amber-400 hover:bg-amber-50/30'
+          }`}>
+          <div className={`p-2.5 rounded-xl shrink-0 transition-transform group-hover:scale-110 ${activeReportCard === 'inventory' ? 'bg-white/15' : 'bg-amber-50'}`}>
+            <Package size={18} className={activeReportCard === 'inventory' ? 'text-white' : 'text-amber-600'} />
+          </div>
+          <div>
+            <p className={`text-[9px] font-black uppercase tracking-wider ${activeReportCard === 'inventory' ? 'text-amber-100' : 'text-zinc-500'}`}>Report #4</p>
+            <h3 className={`text-sm font-black leading-snug mt-0.5 ${activeReportCard === 'inventory' ? 'text-white' : 'text-zinc-950'}`}>Roll Balance</h3>
+            <p className={`text-[9px] font-bold mt-0.5 leading-normal ${activeReportCard === 'inventory' ? 'text-amber-100' : 'text-zinc-500'}`}>Product inventory</p>
           </div>
         </button>
 
       </div>
+
+      {/* ── Date Range Picker Dialog ── */}
+      <Dialog open={showDateRangeDialog} onOpenChange={(open) => { if (!open) setShowDateRangeDialog(false); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black flex items-center gap-2">
+              <Calendar size={18} />
+              Date Range Select Karein
+            </DialogTitle>
+            <DialogDescription className="text-xs text-zinc-400">
+              {pendingReportCard === 'purchase' && 'Purchase Cost Report ke liye date range select karein'}
+              {pendingReportCard === 'profitability' && 'Order Profitability Report ke liye date range select karein'}
+              {pendingReportCard === 'company' && 'Company Sales Report ke liye date range select karein'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="flex flex-wrap gap-2">
+              {[
+                { id: 'today', label: 'Aaj' },
+                { id: 'yesterday', label: 'Kal' },
+                { id: 'this-week', label: 'Is Hafte' },
+                { id: 'this-month', label: 'Is Mahine' },
+                { id: 'last-month', label: 'Pichle Mahine' },
+                { id: 'last-30-days', label: '30 Din' },
+              ].map(p => (
+                <button key={p.id} type="button"
+                  onClick={() => handleDialogPreset(p.id)}
+                  className={cn('py-1.5 px-3 rounded-lg border text-xs font-bold transition-all cursor-pointer',
+                    dialogPreset === p.id ? 'bg-zinc-950 text-white border-zinc-950' : 'bg-zinc-50 border-zinc-200 text-zinc-600 hover:bg-zinc-100'
+                  )}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-zinc-600">Shuru Ki Tarikh</Label>
+                <Input type="date" value={dialogStartDate} onChange={e => { setDialogStartDate(e.target.value); setDialogPreset('custom'); }} className="h-9 text-sm" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-zinc-600">Khatam Ki Tarikh</Label>
+                <Input type="date" value={dialogEndDate} onChange={e => { setDialogEndDate(e.target.value); setDialogPreset('custom'); }} className="h-9 text-sm" />
+              </div>
+            </div>
+            {dialogStartDate && dialogEndDate && (
+              <div className="bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-xs font-semibold text-zinc-600">
+                📅 {new Date(dialogStartDate).toLocaleDateString('en-IN')} se {new Date(dialogEndDate).toLocaleDateString('en-IN')} tak
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="h-9 text-xs" onClick={() => setShowDateRangeDialog(false)}>Cancel</Button>
+            <Button className="h-9 text-xs gap-1.5" onClick={confirmReportDateRange}>
+              <BarChart3 size={13} /> Report Dekho
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── BOTTOM CONTENT ── */}
       {activeReportCard === null ? (
@@ -798,9 +882,201 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
               </CardContent>
             </Card>
           </div>
+
+          {/* ── INFO CARD: Reporting Process Explanation ── */}
+          <Card className="border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 shadow-sm rounded-2xl overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-400 to-orange-500" />
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-black text-amber-900 flex items-center gap-2">
+                <HelpCircle size={16} className="text-amber-600" />
+                Kya Aap Reporting Ka Process Explain Kar Sakte Hai?
+              </CardTitle>
+              <CardDescription className="text-xs text-amber-700 font-semibold">Mujhe 2 tarah ki reports chahiye — yahan poori detail hai</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Type 1 */}
+                <div className="bg-white/80 border border-amber-200 rounded-xl p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="h-7 w-7 rounded-lg bg-amber-100 flex items-center justify-center text-amber-700 font-black text-sm">1</div>
+                    <span className="text-xs font-black text-amber-900">Product Mein Rolls Ka Detail</span>
+                  </div>
+                  <p className="text-xs text-zinc-600 font-medium leading-relaxed">
+                    Ek product mein <strong>kitne rolls hain</strong> aur <strong>un rolls mein kitna balance (sqm) bacha hai</strong> — yeh har roll ke liye alag alag dikhe.
+                  </p>
+                  <div className="bg-amber-50 rounded-lg p-2.5 text-[10px] font-mono text-amber-800 space-y-1">
+                    <div>📦 PTFE — 3 Rolls</div>
+                    <div className="ml-4">• Roll #1 → 12.5 sqm</div>
+                    <div className="ml-4">• Roll #2 → 8.2 sqm</div>
+                    <div className="ml-4">• Roll #3 → 4.1 sqm</div>
+                  </div>
+                </div>
+                {/* Type 2 */}
+                <div className="bg-white/80 border border-amber-200 rounded-xl p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="h-7 w-7 rounded-lg bg-orange-100 flex items-center justify-center text-orange-700 font-black text-sm">2</div>
+                    <span className="text-xs font-black text-amber-900">Product Ka Total Balance</span>
+                  </div>
+                  <p className="text-xs text-zinc-600 font-medium leading-relaxed">
+                    Us pure product mein <strong>kitna total balance</strong> hai — yaani sare rolls ka balance jodkar ek <strong>grand total</strong>.
+                  </p>
+                  <div className="bg-orange-50 rounded-lg p-2.5 text-[10px] font-mono text-orange-800 space-y-1">
+                    <div>📊 PTFE Total = 24.8 sqm</div>
+                    <div>📊 PVC Total = 18.3 sqm</div>
+                    <div>📊 PU Total = 9.6 sqm</div>
+                    <div className="border-t border-orange-200 pt-1 font-black">Grand Total = 52.7 sqm</div>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-amber-700 font-bold bg-amber-100 rounded-xl px-4 py-2.5">
+                <Package size={14} />
+                <span>Iske liye <strong>"Roll Balance" Report</strong> (Report #4) click karein — wahan yeh sab detail dikhega!</span>
+              </div>
+            </CardContent>
+          </Card>
+
+        </div>
+      ) : activeReportCard === 'inventory' ? (
+        /* ── Inventory / Roll Balance Report ── */
+        <div className="space-y-6 animate-in fade-in slide-in-from-top-3 duration-300">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-3 rounded-xl bg-amber-600 text-white shadow-sm">
+                <Package size={20} />
+              </div>
+              <div>
+                <h2 className="text-sm font-black uppercase tracking-wider text-zinc-900">Roll Balance Report</h2>
+                <p className="text-xs text-zinc-500 font-bold mt-0.5">Product-wise active rolls aur balance</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5">
+              <Layers size={13} className="text-amber-600" />
+              <span className="text-xs font-bold text-amber-700">{rolls.filter(r => !r.isArchived && r.status !== 'refused').length} Active Rolls</span>
+            </div>
+          </div>
+
+          {/* Grand Total Summary Row */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {inventoryEntries.map(([product, data]) => (
+              <Card key={product} className="border-zinc-200 shadow-sm bg-white rounded-2xl overflow-hidden">
+                <div className="h-1 bg-gradient-to-r from-amber-400 to-orange-500" />
+                <CardContent className="p-4">
+                  <p className="text-[10px] font-black uppercase text-zinc-400 tracking-wider">{product}</p>
+                  <h3 className="text-xl font-black text-zinc-950 mt-0.5 font-mono">{data.totalRemaining.toFixed(1)} <span className="text-xs font-bold text-zinc-400">sqm</span></h3>
+                  <p className="text-[10px] text-zinc-500 font-bold mt-0.5">{data.rolls.length} rolls active</p>
+                </CardContent>
+              </Card>
+            ))}
+            <Card className="border-amber-200 shadow-sm bg-amber-50 rounded-2xl overflow-hidden">
+              <div className="h-1 bg-gradient-to-r from-amber-500 to-red-500" />
+              <CardContent className="p-4">
+                <p className="text-[10px] font-black uppercase text-amber-600 tracking-wider">Grand Total</p>
+                <h3 className="text-xl font-black text-zinc-950 mt-0.5 font-mono">
+                  {inventoryValues.reduce((s, d) => s + d.totalRemaining, 0).toFixed(1)} <span className="text-xs font-bold text-zinc-400">sqm</span>
+                </h3>
+                <p className="text-[10px] text-amber-700 font-bold mt-0.5">{rolls.filter(r => !r.isArchived && r.status !== 'refused').length} rolls total</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Product-wise Roll Detail */}
+          <div className="space-y-4">
+            {inventoryEntries.length === 0 ? (
+              <Card className="border-zinc-200 shadow-sm">
+                <CardContent className="py-12 flex flex-col items-center text-zinc-400">
+                  <Package size={40} className="opacity-30 mb-3" />
+                  <p className="text-sm font-medium">Koi active rolls nahi mile</p>
+                  <p className="text-xs mt-1">BeltcutPro mein rolls add karein</p>
+                </CardContent>
+              </Card>
+            ) : inventoryEntries.map(([product, data]) => (
+              <Card key={product} className="border-zinc-200 shadow-sm rounded-2xl overflow-hidden">
+                <button type="button" className="w-full text-left"
+                  onClick={() => setExpandedProducts(prev => {
+                    const next = new Set(prev);
+                    next.has(product) ? next.delete(product) : next.add(product);
+                    return next;
+                  })}>
+                  <CardHeader className="pb-3 border-b border-zinc-100 hover:bg-zinc-50/50 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-xl bg-amber-100 flex items-center justify-center">
+                          <Package size={16} className="text-amber-600" />
+                        </div>
+                        <div>
+                          <CardTitle className="text-sm font-black text-zinc-900">{product}</CardTitle>
+                          <CardDescription className="text-xs">{data.rolls.length} rolls • {data.totalRemaining.toFixed(2)} sqm remaining</CardDescription>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <p className="text-xs text-zinc-400 font-bold">Total Balance</p>
+                          <p className="text-base font-black text-amber-600 font-mono">{data.totalRemaining.toFixed(2)} sqm</p>
+                        </div>
+                        {expandedProducts.has(product) ? <ChevronUp size={16} className="text-zinc-400" /> : <ChevronDown size={16} className="text-zinc-400" />}
+                      </div>
+                    </div>
+                    {/* Progress bar */}
+                    <div className="mt-2 w-full bg-zinc-100 rounded-full h-1.5">
+                      <div className="bg-gradient-to-r from-amber-400 to-orange-500 h-full rounded-full transition-all"
+                        style={{ width: `${Math.min(100, (data.totalRemaining / Math.max(data.totalSqm, 1)) * 100)}%` }} />
+                    </div>
+                    <p className="text-[10px] text-zinc-400 font-bold mt-0.5">{((data.totalRemaining / Math.max(data.totalSqm, 1)) * 100).toFixed(1)}% baki hai</p>
+                  </CardHeader>
+                </button>
+
+                {expandedProducts.has(product) && (
+                  <CardContent className="p-0">
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader className="bg-zinc-50">
+                          <TableRow>
+                            <TableHead className="text-[10px] font-black uppercase text-zinc-500">Roll ID</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase text-zinc-500">Width × Length</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Total Sqm</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Remaining Sqm</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Used %</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase text-zinc-500">Status</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody className="text-xs">
+                          {data.rolls.map((roll: any, idx: number) => {
+                            const usedPct = roll.totalSqm > 0 ? ((roll.totalSqm - roll.remainingSqm) / roll.totalSqm) * 100 : 0;
+                            return (
+                              <TableRow key={roll.id} className="hover:bg-amber-50/30 transition-colors h-10">
+                                <TableCell className="font-mono font-bold text-zinc-700">#{idx + 1} <span className="text-zinc-400 font-normal">{roll.id.substring(0, 6)}</span></TableCell>
+                                <TableCell className="font-mono text-zinc-600">{(roll.fullWidth * 1000).toFixed(0)}mm × {(roll.fullLength * 1000).toFixed(0)}mm</TableCell>
+                                <TableCell className="text-right font-mono font-bold text-zinc-900">{(roll.totalSqm || 0).toFixed(2)}</TableCell>
+                                <TableCell className="text-right font-mono font-black text-amber-600">{(roll.remainingSqm || 0).toFixed(2)}</TableCell>
+                                <TableCell className="text-right">
+                                  <span className={cn('text-[10px] font-black px-1.5 py-0.5 rounded',
+                                    usedPct > 80 ? 'bg-red-50 text-red-600' : usedPct > 50 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'
+                                  )}>{usedPct.toFixed(0)}%</span>
+                                </TableCell>
+                                <TableCell>
+                                  <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full',
+                                    roll.isReuse ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-700'
+                                  )}>{roll.isReuse ? 'Reuse' : 'Active'}</span>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                          <TableRow className="bg-amber-50 border-t-2 border-amber-200 font-black">
+                            <TableCell colSpan={3} className="text-xs font-black text-amber-800">{product} — Total Balance</TableCell>
+                            <TableCell className="text-right text-sm font-black font-mono text-amber-700">{data.totalRemaining.toFixed(2)} sqm</TableCell>
+                            <TableCell colSpan={2} />
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                )}
+              </Card>
+            ))}
+          </div>
         </div>
       ) : (
-        /* Sub-Report Views */
+        /* Sub-Report Views (purchase / profitability / company) */
         <div className="space-y-6 animate-in fade-in slide-in-from-top-3 duration-300">
           
           {/* Header Bar with Action Controls */}
