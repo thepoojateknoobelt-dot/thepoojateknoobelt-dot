@@ -634,24 +634,53 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
     reader.onload = async (event) => {
       const text = event.target?.result as string;
       const lines = text.split(/\r?\n/).filter(l => l.trim());
+      if (lines.length === 0) return;
+
+      // Parse headers
+      const headers = parseCSVLine(lines[0]);
+      const colMap = {
+        name: headers.findIndex(h => h.toLowerCase() === 'name'),
+        company: headers.findIndex(h => h.toLowerCase() === 'company'),
+        city: headers.findIndex(h => h.toLowerCase() === 'city'),
+        mobile: headers.findIndex(h => h.toLowerCase() === 'mobile'),
+        address: headers.findIndex(h => h.toLowerCase() === 'address'),
+        gstin: headers.findIndex(h => h.toLowerCase() === 'gstin'),
+        profit: headers.findIndex(h => h.toLowerCase() === 'defaultprofit' || h.toLowerCase() === 'default profit' || h.toLowerCase() === 'profit'),
+      };
+
       let count = 0;
       let errors = 0;
       for (let i = 1; i < lines.length; i++) {
         const values = parseCSVLine(lines[i]);
-        if (values.length < 3) continue;
+        // Require at least name, company, city
+        if (colMap.name === -1 || colMap.company === -1 || colMap.city === -1) {
+          toast.error("CSV must contain Name, Company, and City headers");
+          return;
+        }
+        
+        const name = values[colMap.name] || '';
+        const company = values[colMap.company] || '';
+        const city = values[colMap.city] || '';
+        const mobile = colMap.mobile !== -1 ? (values[colMap.mobile] || '') : '';
+        const address = colMap.address !== -1 ? (values[colMap.address] || '') : '';
+        const gstin = colMap.gstin !== -1 ? (values[colMap.gstin] || '') : '';
+        const profitMargin = colMap.profit !== -1 ? (parseFloat(values[colMap.profit]) || 20) : 20;
+
+        if (!name || !company || !city) continue;
+
         try {
           const res = await fetch('/api/clients', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              name: values[0] || '',
-              company: values[1] || '',
-              city: values[2] || '',
-              mobile: values[3] || '',
-              address: values[4] || '',
-              gstin: values[5] || '',
+              name,
+              company,
+              city,
+              mobile,
+              address,
+              gstin,
               profitMargins: (Array.isArray(config?.beltTypes) ? config.beltTypes : []).reduce(
-                (acc, type) => ({ ...acc, [type.name]: [{ minLength: 0, maxLength: null, margin: parseFloat(values[6]) || 20 }] }),
+                (acc, type) => ({ ...acc, [type.name]: [{ minLength: 0, maxLength: null, margin: profitMargin }] }),
                 {} as Record<string, ProfitRange[]>
               ),
             }),
@@ -701,10 +730,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
             <input type="file" accept=".csv" className="hidden" onChange={handleBulkUpload} />
           </label>
           <Button variant="outline" className="gap-1.5 h-8 text-xs px-3 shadow-sm" onClick={() => {
-            const headers = 'Name,Company,City,Mobile,Address,GSTIN,DefaultProfit';
-            const sample1 = 'SUN ENGINEERING WORKS,SUN ENGINEERING WORKS,SURAT,7046475153,"Plot 24, Industrial Area",24AAAAA0000A1Z,20';
-            const sample2 = 'Nilesh soni,ptb,surat,9879022753,Surat,24BBBBB1111B2Z2,20';
-            const csv = `${headers}\n${sample1}\n${sample2}`;
+            const csv = 'Name,Company,City,DefaultProfit\nJohn Doe,ABC Industries,Mumbai,25\nJane Smith,XYZ Corp,Delhi,18';
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a'); a.href = url; a.download = 'clients_template.csv'; a.click();
@@ -774,75 +800,79 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                 <p className="text-xs mt-1">{search ? 'Try a different search term' : 'Add your first client using the form on the left'}</p>
               </div>
             ) : (
-              <div className="space-y-1.5">
-                {filteredClients.map(c => (
-                  <div
-                    key={c.id}
-                    onClick={() => setSelectedClient(c)}
-                    className="group flex items-center gap-4 p-3.5 rounded-xl border border-transparent hover:border-zinc-200 hover:bg-zinc-50/70 cursor-pointer transition-all duration-150"
-                  >
-                    {/* Avatar */}
-                    <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-zinc-200 to-zinc-100 flex items-center justify-center text-zinc-700 text-sm font-black shrink-0">
-                      {c.name.charAt(0).toUpperCase()}
-                    </div>
-
-                    {/* Info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-zinc-900 truncate">{c.name}</span>
-                      </div>
-                      <div className="flex items-center gap-3 mt-0.5">
-                        <span className="text-xs text-zinc-500 flex items-center gap-1">
-                          <Building2 className="h-3 w-3" />{c.company}
-                        </span>
-                        <span className="text-xs text-zinc-400 flex items-center gap-1">
-                          <MapPin className="h-3 w-3" />{c.city}
-                        </span>
-                        {c.mobile && (
-                          <span className="text-xs text-zinc-400 flex items-center gap-1">
-                            <Phone className="h-3 w-3" />{c.mobile}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Margin badges */}
-                    <div className="hidden sm:flex items-center gap-1 shrink-0">
-                      {(Array.isArray(config?.beltTypes) ? config.beltTypes : []).slice(0, 3).map(type => {
-                        const m = c.profitMargins?.[type.name]?.[0]?.margin;
-                        return m !== undefined ? (
-                          <span key={type.id} className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded px-1.5 py-0.5">
-                            {type.name} {m}%
-                          </span>
-                        ) : null;
-                      })}
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7 text-zinc-400 hover:text-blue-600"
-                        onClick={e => { e.stopPropagation(); setSelectedClient(c); }}
-                        title="View Details"
+              <div className="overflow-x-auto rounded-xl border border-zinc-200 shadow-sm">
+                <table className="min-w-full divide-y divide-zinc-200 text-left text-xs text-zinc-700">
+                  <thead className="bg-zinc-50 font-bold uppercase tracking-wider text-zinc-500 text-[10px]">
+                    <tr>
+                      <th scope="col" className="px-4 py-3">Client / Company</th>
+                      <th scope="col" className="px-4 py-3">City</th>
+                      <th scope="col" className="px-4 py-3">Mobile</th>
+                      <th scope="col" className="px-4 py-3">GSTIN</th>
+                      <th scope="col" className="px-4 py-3">Profit Margins</th>
+                      <th scope="col" className="px-4 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-zinc-200 font-medium">
+                    {filteredClients.map(c => (
+                      <tr
+                        key={c.id}
+                        onClick={() => setSelectedClient(c)}
+                        className="hover:bg-zinc-50/70 cursor-pointer transition-colors duration-150"
                       >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                      {user?.role === 'admin' && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7 text-zinc-400 hover:text-red-500"
-                          onClick={e => { e.stopPropagation(); handleDeleteClient(c.id, c.name); }}
-                          title="Delete Client"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-3">
+                            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-zinc-100 to-zinc-50 flex items-center justify-center text-zinc-700 text-xs font-black shrink-0 border border-zinc-200">
+                              {c.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="font-bold text-sm text-zinc-900 leading-tight">{c.name}</div>
+                              <div className="text-[10px] text-zinc-400 font-semibold">{c.company}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5 text-zinc-600 font-semibold">{c.city}</td>
+                        <td className="px-4 py-3.5 text-zinc-500 font-mono">{c.mobile || '-'}</td>
+                        <td className="px-4 py-3.5 text-zinc-400 font-mono text-[10px]">{c.gstin || '-'}</td>
+                        <td className="px-4 py-3.5">
+                          <div className="flex flex-wrap gap-1">
+                            {(Array.isArray(config?.beltTypes) ? config.beltTypes : []).slice(0, 3).map(type => {
+                              const m = c.profitMargins?.[type.name]?.[0]?.margin;
+                              return m !== undefined ? (
+                                <span key={type.id} className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded px-1.5 py-0.5">
+                                  {type.name} {m}%
+                                </span>
+                              ) : null;
+                            })}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5 text-right" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-zinc-400 hover:text-blue-600 hover:bg-blue-50"
+                              onClick={() => setSelectedClient(c)}
+                              title="View Details"
+                            >
+                              <ChevronRight className="h-4 w-4" />
+                            </Button>
+                            {user?.role === 'admin' && (
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7 text-zinc-400 hover:text-rose-600 hover:bg-rose-50"
+                                onClick={() => handleDeleteClient(c.id, c.name)}
+                                title="Delete"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </CardContent>
