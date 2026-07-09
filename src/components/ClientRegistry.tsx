@@ -743,7 +743,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
             <input type="file" accept=".csv" className="hidden" onChange={handleBulkUpload} />
           </label>
           <Button variant="outline" className="gap-1.5 h-8 text-xs px-3 shadow-sm" onClick={() => {
-            const csv = 'Name,Company,City,Mobile,DefaultProfit\nSUN ENGINEERING WORKS,SUN ENGINEERING WORKS,SURAT,7046475153,20\nNilesh soni,ptb,surat,9879022753,20';
+            const csv = 'Name,Company,City,Mobile,DefaultProfit';
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a'); a.href = url; a.download = 'clients_template.csv'; a.click();
