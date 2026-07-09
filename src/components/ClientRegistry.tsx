@@ -559,6 +559,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
   const { user } = useAuth();
   const [search, setSearch] = useState('');
   const [isAdding, setIsAdding] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
   const [formData, setFormData] = useState({ name: '', company: '', city: '', mobile: '' });
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [cityFilter, setCityFilter] = useState('All');
@@ -597,6 +598,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
       }
       toast.success('Client added successfully!');
       setFormData({ name: '', company: '', city: '', mobile: '' });
+      setShowAddModal(false);
       onRefresh?.();
     } catch (err: any) {
       toast.error(err.message || 'Failed to add client');
@@ -750,173 +752,192 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
           }}>
             <Download className="h-3.5 w-3.5" /> Template
           </Button>
+          <Button className="gap-1.5 h-8 text-xs px-3 shadow-sm" onClick={() => setShowAddModal(true)}>
+            <UserPlus className="h-3.5 w-3.5" /> Add New Client
+          </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Add Client Form */}
-        <Card className="lg:col-span-1 border-zinc-200 shadow-sm h-fit">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-black text-zinc-800">Add New Client</CardTitle>
-          </CardHeader>
-          <form onSubmit={handleAddClient}>
-            <CardContent className="space-y-3 pt-0">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-zinc-600">Client Name <span className="text-rose-500">*</span></Label>
-                <Input className="h-9 text-sm" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-zinc-600">Company <span className="text-rose-500">*</span></Label>
-                <Input className="h-9 text-sm" value={formData.company} onChange={e => setFormData({ ...formData, company: e.target.value })} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-zinc-600">Mobile Number</Label>
-                <Input className="h-9 text-sm font-mono" value={formData.mobile} onChange={e => setFormData({ ...formData, mobile: e.target.value })} placeholder="9876543210" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-zinc-600">City <span className="text-rose-500">*</span></Label>
-                <Input className="h-9 text-sm" value={formData.city} onChange={e => setFormData({ ...formData, city: e.target.value })} required />
-              </div>
-              <p className="text-[10px] text-zinc-400 italic">Default 20% profit margin. Customize after adding.</p>
-              <Button type="submit" className="w-full h-9 text-xs gap-1.5" disabled={isAdding}>
-                <UserPlus className="h-3.5 w-3.5" />
-                {isAdding ? 'Adding...' : 'Add Client'}
-              </Button>
-            </CardContent>
-          </form>
-        </Card>
-
-        {/* Client List */}
-        <Card className="lg:col-span-3 border-zinc-200 shadow-sm">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between gap-3">
-              <CardTitle className="text-sm font-black text-zinc-800">
-                All Clients
-                <span className="ml-2 text-zinc-400 font-bold">{filteredClients.length}</span>
-              </CardTitle>
-              <div className="relative w-56">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
-                <Input
-                  placeholder="Search by name, city..."
-                  className="pl-9 h-8 text-xs"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                />
-              </div>
+      {/* Full-width Client List */}
+      <Card className="border-zinc-200 shadow-sm">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-sm font-black text-zinc-800">
+              All Clients
+              <span className="ml-2 text-zinc-400 font-bold">{filteredClients.length}</span>
+            </CardTitle>
+            <div className="relative w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
+              <Input
+                placeholder="Search by name, city..."
+                className="pl-9 h-8 text-xs"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
             </div>
-          </CardHeader>
-          <CardContent className="pt-0">
-            {filteredClients.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-zinc-400">
-                <User className="h-10 w-10 mb-3 opacity-30" />
-                <p className="text-sm font-medium">{search ? 'No clients match your search' : 'No clients yet'}</p>
-                <p className="text-xs mt-1">{search ? 'Try a different search term' : 'Add your first client using the form on the left'}</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-xl border border-zinc-200 shadow-sm">
-                <table className="min-w-full divide-y divide-zinc-200 text-left text-xs text-zinc-700">
-                  <thead className="bg-zinc-50 font-bold uppercase tracking-wider text-zinc-500 text-[10px]">
-                    <tr>
-                      <th scope="col" className="px-4 py-3">Name</th>
-                      <th scope="col" className="px-4 py-3">Company</th>
-                      <th scope="col" className="px-4 py-3 relative">
-                        <div className="flex items-center gap-1.5 cursor-pointer select-none" onClick={() => setShowCityFilterDropdown(!showCityFilterDropdown)}>
-                          <span>City</span>
-                          <Filter className={cn("h-3 w-3 transition", cityFilter !== 'All' ? "text-blue-600 fill-blue-50" : "text-zinc-400")} />
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {filteredClients.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-zinc-400">
+              <User className="h-10 w-10 mb-3 opacity-30" />
+              <p className="text-sm font-medium">{search ? 'No clients match your search' : 'No clients yet'}</p>
+              <p className="text-xs mt-1">{search ? 'Try a different search term' : 'Click "Add New Client" button to add your first client'}</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-zinc-200 shadow-sm">
+              <table className="min-w-full divide-y divide-zinc-200 text-left text-xs text-zinc-700">
+                <thead className="bg-zinc-50 font-bold uppercase tracking-wider text-zinc-500 text-[10px]">
+                  <tr>
+                    <th scope="col" className="px-4 py-3">Name</th>
+                    <th scope="col" className="px-4 py-3">Company</th>
+                    <th scope="col" className="px-4 py-3 relative">
+                      <div className="flex items-center gap-1.5 cursor-pointer select-none" onClick={() => setShowCityFilterDropdown(!showCityFilterDropdown)}>
+                        <span>City</span>
+                        <Filter className={cn("h-3 w-3 transition", cityFilter !== 'All' ? "text-blue-600 fill-blue-50" : "text-zinc-400")} />
+                      </div>
+                      {showCityFilterDropdown && (
+                        <>
+                          <div className="fixed inset-0 z-10" onClick={() => setShowCityFilterDropdown(false)} />
+                          <div className="absolute left-4 top-9 z-20 min-w-[140px] bg-white border border-zinc-200 rounded-xl shadow-lg py-1.5 text-xs font-bold normal-case tracking-normal animate-in fade-in duration-100">
+                            <div className="px-2.5 py-1 text-[9px] font-black text-zinc-400 uppercase tracking-wider border-b border-zinc-100">Filter City</div>
+                            {uniqueCities.map(city => (
+                              <button
+                                key={city}
+                                onClick={() => {
+                                  setCityFilter(city);
+                                  setShowCityFilterDropdown(false);
+                                }}
+                                className={cn(
+                                  "w-full text-left px-3 py-1.5 hover:bg-zinc-50 flex items-center justify-between",
+                                  cityFilter === city && "text-blue-600 bg-blue-50/50"
+                                )}
+                              >
+                                <span>{city}</span>
+                                {cityFilter === city && <Check className="h-3 w-3" />}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </th>
+                    <th scope="col" className="px-4 py-3">Mobile</th>
+                    <th scope="col" className="px-4 py-3">Profit Margins</th>
+                    <th scope="col" className="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-zinc-200 font-medium">
+                  {filteredClients.map(c => (
+                    <tr
+                      key={c.id}
+                      onClick={() => setSelectedClient(c)}
+                      className="hover:bg-zinc-50/70 cursor-pointer transition-colors duration-150"
+                    >
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-3">
+                          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-zinc-100 to-zinc-50 flex items-center justify-center text-zinc-700 text-xs font-black shrink-0 border border-zinc-200">
+                            {c.name.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="font-bold text-sm text-zinc-900 leading-tight">{c.name}</span>
                         </div>
-                        {showCityFilterDropdown && (
-                          <>
-                            <div className="fixed inset-0 z-10" onClick={() => setShowCityFilterDropdown(false)} />
-                            <div className="absolute left-4 top-9 z-20 min-w-[140px] bg-white border border-zinc-200 rounded-xl shadow-lg py-1.5 text-xs font-bold text-zinc-750 normal-case tracking-normal animate-in fade-in duration-100">
-                              <div className="px-2.5 py-1 text-[9px] font-black text-zinc-400 uppercase tracking-wider border-b border-zinc-100">Filter City</div>
-                              {uniqueCities.map(city => (
-                                <button
-                                  key={city}
-                                  onClick={() => {
-                                    setCityFilter(city);
-                                    setShowCityFilterDropdown(false);
-                                  }}
-                                  className={cn(
-                                    "w-full text-left px-3 py-1.5 hover:bg-zinc-50 flex items-center justify-between",
-                                    cityFilter === city && "text-blue-600 bg-blue-50/50"
-                                  )}
-                                >
-                                  <span>{city}</span>
-                                  {cityFilter === city && <Check className="h-3 w-3" />}
-                                </button>
-                              ))}
-                            </div>
-                          </>
-                        )}
-                      </th>
-                      <th scope="col" className="px-4 py-3">Mobile</th>
-                      <th scope="col" className="px-4 py-3">Profit Margins</th>
-                      <th scope="col" className="px-4 py-3 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-zinc-200 font-medium">
-                    {filteredClients.map(c => (
-                      <tr
-                        key={c.id}
-                        onClick={() => setSelectedClient(c)}
-                        className="hover:bg-zinc-50/70 cursor-pointer transition-colors duration-150"
-                      >
-                        <td className="px-4 py-3.5">
-                          <div className="flex items-center gap-3">
-                            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-zinc-100 to-zinc-50 flex items-center justify-center text-zinc-700 text-xs font-black shrink-0 border border-zinc-200">
-                              {c.name.charAt(0).toUpperCase()}
-                            </div>
-                            <span className="font-bold text-sm text-zinc-900 leading-tight">{c.name}</span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3.5 text-zinc-500 font-semibold">{c.company}</td>
-                        <td className="px-4 py-3.5 text-zinc-600 font-semibold">{c.city}</td>
-                        <td className="px-4 py-3.5 text-zinc-500 font-mono">{c.mobile || '-'}</td>
-                        <td className="px-4 py-3.5">
-                          <div className="flex flex-wrap gap-1">
-                            {(Array.isArray(config?.beltTypes) ? config.beltTypes : []).slice(0, 3).map(type => {
-                              const m = c.profitMargins?.[type.name]?.[0]?.margin;
-                              return m !== undefined ? (
-                                <span key={type.id} className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded px-1.5 py-0.5">
-                                  {type.name} {m}%
-                                </span>
-                              ) : null;
-                            })}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3.5 text-right" onClick={e => e.stopPropagation()}>
-                          <div className="flex items-center justify-end gap-1.5">
+                      </td>
+                      <td className="px-4 py-3.5 text-zinc-500 font-semibold">{c.company}</td>
+                      <td className="px-4 py-3.5 text-zinc-600 font-semibold">{c.city}</td>
+                      <td className="px-4 py-3.5 text-zinc-500 font-mono whitespace-nowrap">{c.mobile || '-'}</td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex flex-wrap gap-1">
+                          {(Array.isArray(config?.beltTypes) ? config.beltTypes : []).slice(0, 3).map(type => {
+                            const m = c.profitMargins?.[type.name]?.[0]?.margin;
+                            return m !== undefined ? (
+                              <span key={type.id} className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded px-1.5 py-0.5">
+                                {type.name} {m}%
+                              </span>
+                            ) : null;
+                          })}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3.5 text-right" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-zinc-400 hover:text-blue-600 hover:bg-blue-50"
+                            onClick={() => setSelectedClient(c)}
+                            title="View Details"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </Button>
+                          {user?.role === 'admin' && (
                             <Button
                               size="icon"
                               variant="ghost"
-                              className="h-7 w-7 text-zinc-400 hover:text-blue-600 hover:bg-blue-50"
-                              onClick={() => setSelectedClient(c)}
-                              title="View Details"
+                              className="h-7 w-7 text-zinc-400 hover:text-rose-600 hover:bg-rose-50"
+                              onClick={() => handleDeleteClient(c.id, c.name)}
+                              title="Delete"
                             >
-                              <ChevronRight className="h-4 w-4" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
-                            {user?.role === 'admin' && (
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7 text-zinc-400 hover:text-rose-600 hover:bg-rose-50"
-                                onClick={() => handleDeleteClient(c.id, c.name)}
-                                title="Delete"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Add New Client Modal */}
+      <Dialog open={showAddModal} onOpenChange={(open) => { setShowAddModal(open); if (!open) setFormData({ name: '', company: '', city: '', mobile: '' }); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black flex items-center gap-2">
+              <UserPlus className="h-4 w-4" /> Add New Client
+            </DialogTitle>
+            <DialogDescription className="text-xs text-zinc-400">Fill in the details below. Default profit margin of 20% is applied.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleAddClient} className="space-y-4 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-zinc-600">Client Name <span className="text-rose-500">*</span></Label>
+              <Input className="h-9 text-sm" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} placeholder="e.g. Nilesh Soni" required />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-zinc-600">Company <span className="text-rose-500">*</span></Label>
+              <Input className="h-9 text-sm" value={formData.company} onChange={e => setFormData({ ...formData, company: e.target.value })} placeholder="e.g. PTB Industries" required />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-zinc-600">City <span className="text-rose-500">*</span></Label>
+                <Input className="h-9 text-sm" value={formData.city} onChange={e => setFormData({ ...formData, city: e.target.value })} placeholder="e.g. SURAT" required />
               </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-zinc-600">Mobile Number</Label>
+                <Input
+                  className="h-9 text-sm font-mono"
+                  value={formData.mobile}
+                  onChange={e => {
+                    const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                    setFormData({ ...formData, mobile: val });
+                  }}
+                  placeholder="9876543210"
+                  maxLength={10}
+                  inputMode="numeric"
+                />
+              </div>
+            </div>
+            <p className="text-[10px] text-zinc-400 italic">Default 20% profit margin applied. You can customize per belt type after adding.</p>
+            <div className="flex gap-2 pt-1">
+              <Button type="button" variant="outline" className="flex-1 h-9 text-xs" onClick={() => setShowAddModal(false)}>Cancel</Button>
+              <Button type="submit" className="flex-1 h-9 text-xs gap-1.5" disabled={isAdding}>
+                <UserPlus className="h-3.5 w-3.5" />
+                {isAdding ? 'Adding...' : 'Add Client'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Client Detail Modal */}
       <ClientModal
