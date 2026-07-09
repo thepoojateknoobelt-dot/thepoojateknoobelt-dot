@@ -608,38 +608,72 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
     }
   };
 
+  const parseCSVLine = (line: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim());
+    return result.map(val => val.replace(/^"|"$/g, '').trim());
+  };
+
   const handleBulkUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async (event) => {
       const text = event.target?.result as string;
-      const lines = text.split('\n').filter(l => l.trim());
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
       let count = 0;
+      let errors = 0;
       for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',');
+        const values = parseCSVLine(lines[i]);
         if (values.length < 3) continue;
         try {
-          await fetch('/api/clients', {
+          const res = await fetch('/api/clients', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              name: values[0].trim(),
-              company: values[1].trim(),
-              city: values[2].trim(),
+              name: values[0] || '',
+              company: values[1] || '',
+              city: values[2] || '',
+              mobile: values[3] || '',
+              address: values[4] || '',
+              gstin: values[5] || '',
               profitMargins: (Array.isArray(config?.beltTypes) ? config.beltTypes : []).reduce(
-                (acc, type) => ({ ...acc, [type.name]: [{ minLength: 0, maxLength: null, margin: parseFloat(values[3]) || 20 }] }),
+                (acc, type) => ({ ...acc, [type.name]: [{ minLength: 0, maxLength: null, margin: parseFloat(values[6]) || 20 }] }),
                 {} as Record<string, ProfitRange[]>
               ),
             }),
           });
-          count++;
-        } catch { /* skip failed rows */ }
+          if (res.ok) {
+            count++;
+          } else {
+            errors++;
+          }
+        } catch { 
+          errors++;
+        }
       }
-      toast.success(`Uploaded ${count} clients`);
+      if (errors > 0) {
+        toast.success(`Uploaded ${count} clients. ${errors} rows skipped/failed (e.g. duplicate mobile).`);
+      } else {
+        toast.success(`Uploaded all ${count} clients successfully!`);
+      }
       onRefresh?.();
     };
     reader.readAsText(file);
+    e.target.value = '';
   };
 
   const filteredClients = clients.filter(c =>
@@ -667,7 +701,10 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
             <input type="file" accept=".csv" className="hidden" onChange={handleBulkUpload} />
           </label>
           <Button variant="outline" className="gap-1.5 h-8 text-xs px-3 shadow-sm" onClick={() => {
-            const csv = 'Name,Company,City,DefaultProfit\nJohn Doe,ABC Industries,Mumbai,25\nJane Smith,XYZ Corp,Delhi,18';
+            const headers = 'Name,Company,City,Mobile,Address,GSTIN,DefaultProfit';
+            const sample1 = 'SUN ENGINEERING WORKS,SUN ENGINEERING WORKS,SURAT,7046475153,"Plot 24, Industrial Area",24AAAAA0000A1Z,20';
+            const sample2 = 'Nilesh soni,ptb,surat,9879022753,Surat,24BBBBB1111B2Z2,20';
+            const csv = `${headers}\n${sample1}\n${sample2}`;
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a'); a.href = url; a.download = 'clients_template.csv'; a.click();
