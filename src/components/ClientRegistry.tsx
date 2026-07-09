@@ -817,7 +817,8 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                 <table className="min-w-full divide-y divide-zinc-200 text-left text-xs text-zinc-700">
                   <thead className="bg-zinc-50 font-bold uppercase tracking-wider text-zinc-500 text-[10px]">
                     <tr>
-                      <th scope="col" className="px-4 py-3">Client / Company</th>
+                      <th scope="col" className="px-4 py-3">Name</th>
+                      <th scope="col" className="px-4 py-3">Company</th>
                       <th scope="col" className="px-4 py-3 relative">
                         <div className="flex items-center gap-1.5 cursor-pointer select-none" onClick={() => setShowCityFilterDropdown(!showCityFilterDropdown)}>
                           <span>City</span>
@@ -865,12 +866,10 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                             <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-zinc-100 to-zinc-50 flex items-center justify-center text-zinc-700 text-xs font-black shrink-0 border border-zinc-200">
                               {c.name.charAt(0).toUpperCase()}
                             </div>
-                            <div>
-                              <div className="font-bold text-sm text-zinc-900 leading-tight">{c.name}</div>
-                              <div className="text-[10px] text-zinc-400 font-semibold">{c.company}</div>
-                            </div>
+                            <span className="font-bold text-sm text-zinc-900 leading-tight">{c.name}</span>
                           </div>
                         </td>
+                        <td className="px-4 py-3.5 text-zinc-500 font-semibold">{c.company}</td>
                         <td className="px-4 py-3.5 text-zinc-600 font-semibold">{c.city}</td>
                         <td className="px-4 py-3.5 text-zinc-500 font-mono">{c.mobile || '-'}</td>
                         <td className="px-4 py-3.5">
