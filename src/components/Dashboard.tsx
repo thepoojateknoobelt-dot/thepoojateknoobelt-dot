@@ -10,6 +10,7 @@ import { ClientRegistry } from './ClientRegistry';
 import { QuotationsList } from './QuotationsList';
 import { Reports } from './Reports';
 import { ActivityLog } from './ActivityLog';
+import { DataDirectory } from './DataDirectory';
 import { Config, Client } from '../types';
 import { cn } from '../lib/utils';
 import { Loader2, Factory, Calculator as CalcIcon, Scissors, ArrowRight, ArrowLeft, Menu, Clock } from 'lucide-react';
@@ -147,6 +148,8 @@ export const Dashboard = () => {
         return <Reports config={safeConfig} clients={clients} />;
       case 'activity':
         return <ActivityLog />;
+      case 'data_directory':
+        return <DataDirectory onRefresh={fetchConfigAndClients} />;
       case 'beltcut':
         return <BeltcutPro />;
       default:

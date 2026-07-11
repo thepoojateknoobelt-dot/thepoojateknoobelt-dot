@@ -90,6 +90,31 @@ async function initializeDatabase() {
       )
     `);
 
+    // Create Deleted Configs history table for recycle bin / Data Directory
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS deleted_configs (
+        id VARCHAR(255) PRIMARY KEY,
+        type VARCHAR(50) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        parent_path VARCHAR(255) DEFAULT '',
+        data JSONB NOT NULL,
+        deleted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Create Rate History table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS rate_history (
+        id SERIAL PRIMARY KEY,
+        item_id VARCHAR(255) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        old_rate NUMERIC NOT NULL,
+        new_rate NUMERIC NOT NULL,
+        changed_by VARCHAR(255) NOT NULL,
+        changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Create Quotations table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS quotations (
@@ -1778,14 +1803,225 @@ app.get('/api/settings/config', async (req, res) => {
 app.post('/api/settings/config', authenticate, async (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   try {
+    const newConfig = req.body;
+    
+    // 1. Fetch old config to diff
+    const oldConfigRes = await pool.query('SELECT data FROM system_config WHERE id = $1', ['default']);
+    const oldConfig = oldConfigRes.rows[0]?.data;
+    
+    if (oldConfig && Array.isArray(oldConfig.beltTypes) && Array.isArray(newConfig.beltTypes)) {
+      const oldBelts = oldConfig.beltTypes;
+      const newBelts = newConfig.beltTypes;
+      
+      // Category Deletions Check
+      for (const oldCat of oldBelts) {
+        const isStillPresent = newBelts.some((c: any) => c.id === oldCat.id);
+        if (!isStillPresent) {
+          const logId = `del-cat-${oldCat.id}-${Date.now()}`;
+          await pool.query(
+            `INSERT INTO deleted_configs (id, type, name, parent_path, data) 
+             VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
+            [logId, 'category', oldCat.name, '', JSON.stringify(oldCat)]
+          );
+        } else {
+          // Check for Style Deletions
+          const newCat = newBelts.find((c: any) => c.id === oldCat.id);
+          if (newCat && Array.isArray(oldCat.styles) && Array.isArray(newCat.styles)) {
+            for (const oldStyle of oldCat.styles) {
+              const isStylePresent = newCat.styles.some((s: any) => s.id === oldStyle.id);
+              if (!isStylePresent) {
+                const logId = `del-style-${oldStyle.id}-${Date.now()}`;
+                await pool.query(
+                  `INSERT INTO deleted_configs (id, type, name, parent_path, data) 
+                   VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
+                  [logId, 'style', oldStyle.name, oldCat.name, JSON.stringify({ style: oldStyle, parentCategoryId: oldCat.id })]
+                );
+              } else {
+                // Check for BOM Component Deletions & Rate Changes
+                const newStyle = newCat.styles.find((s: any) => s.id === oldStyle.id);
+                if (newStyle && Array.isArray(oldStyle.bom) && Array.isArray(newStyle.bom)) {
+                  for (const oldBOM of oldStyle.bom) {
+                    const isBOMPresent = newStyle.bom.some((b: any) => b.id === oldBOM.id);
+                    if (!isBOMPresent) {
+                      const logId = `del-bom-${oldBOM.id}-${Date.now()}`;
+                      await pool.query(
+                        `INSERT INTO deleted_configs (id, type, name, parent_path, data) 
+                         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
+                        [logId, 'bom', oldBOM.name, `${oldCat.name} › ${oldStyle.name}`, JSON.stringify({ bomItem: oldBOM, parentCategoryId: oldCat.id, parentStyleId: oldStyle.id })]
+                      );
+                    } else {
+                      // BOM component is still present -> check for rate changes!
+                      const newBOM = newStyle.bom.find((b: any) => b.id === oldBOM.id);
+                      if (newBOM) {
+                        const changerName = req.user.name || req.user.username || 'Admin';
+                        const oldHasOptions = Array.isArray(oldBOM.options) && oldBOM.options.length > 0;
+                        const newHasOptions = Array.isArray(newBOM.options) && newBOM.options.length > 0;
+                        
+                        // Main rate change (when no options exist)
+                        if (!oldHasOptions && !newHasOptions && oldBOM.rate !== newBOM.rate) {
+                          await pool.query(
+                            `INSERT INTO rate_history (item_id, name, old_rate, new_rate, changed_by) 
+                             VALUES ($1, $2, $3, $4, $5)`,
+                            [oldBOM.id, oldBOM.name, oldBOM.rate, newBOM.rate, changerName]
+                          );
+                        }
+                        
+                        // Option rate change (when options exist)
+                        if (oldHasOptions && newHasOptions) {
+                          for (const oldOpt of oldBOM.options) {
+                            const newOpt = newBOM.options.find((o: any) => o.name === oldOpt.name);
+                            if (newOpt && oldOpt.rate !== newOpt.rate) {
+                              const itemId = `${oldBOM.id}::${oldOpt.name}`;
+                              await pool.query(
+                                `INSERT INTO rate_history (item_id, name, old_rate, new_rate, changed_by) 
+                                 VALUES ($1, $2, $3, $4, $5)`,
+                                [itemId, oldOpt.name, oldOpt.rate, newOpt.rate, changerName]
+                              );
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Save the new config
     await pool.query(
       'INSERT INTO system_config (id, data) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data',
-      ['default', JSON.stringify(req.body)]
+      ['default', JSON.stringify(newConfig)]
     );
     res.json({ success: true });
   } catch (err) {
     console.error('Failed to write config', err);
     res.status(500).json({ error: 'Failed to write config' });
+  }
+});
+
+// Config Recovery History (Data Directory / Recycle Bin) Routes
+app.get('/api/settings/config/rate-history', authenticate, async (req: any, res) => {
+  const { itemId } = req.query;
+  if (!itemId) return res.status(400).json({ error: 'itemId is required' });
+  try {
+    const result = await pool.query(
+      'SELECT old_rate, new_rate, changed_by, changed_at FROM rate_history WHERE item_id = $1 ORDER BY changed_at DESC LIMIT 5',
+      [itemId]
+    );
+    res.json(result.rows.map(r => ({
+      oldRate: parseFloat(r.old_rate),
+      newRate: parseFloat(r.new_rate),
+      changedBy: r.changed_by,
+      changedAt: r.changed_at
+    })));
+  } catch (err) {
+    console.error('Failed to fetch rate history', err);
+    res.status(500).json({ error: 'Failed to retrieve rate history' });
+  }
+});
+
+app.get('/api/settings/config/deleted', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const result = await pool.query('SELECT * FROM deleted_configs ORDER BY deleted_at DESC');
+    res.json(result.rows.map(r => ({
+      id: r.id,
+      type: r.type,
+      name: r.name,
+      parentPath: r.parent_path,
+      deletedAt: r.deleted_at
+    })));
+  } catch (err) {
+    console.error('Failed to fetch deleted configs', err);
+    res.status(500).json({ error: 'Failed to retrieve deleted configurations history' });
+  }
+});
+
+app.post('/api/settings/config/restore/:id', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const { id } = req.params;
+    // 1. Fetch deleted config from DB
+    const delRes = await pool.query('SELECT * FROM deleted_configs WHERE id = $1', [id]);
+    if (delRes.rowCount === 0) return res.status(404).json({ error: 'Deleted item not found' });
+    const delItem = delRes.rows[0];
+    const data = typeof delItem.data === 'string' ? JSON.parse(delItem.data) : delItem.data;
+
+    // 2. Fetch current config
+    const configRes = await pool.query('SELECT data FROM system_config WHERE id = $1', ['default']);
+    if (configRes.rowCount === 0) return res.status(500).json({ error: 'Current system config not found' });
+    const config = configRes.rows[0].data;
+
+    if (!Array.isArray(config.beltTypes)) {
+      config.beltTypes = [];
+    }
+
+    // 3. Restore based on type
+    if (delItem.type === 'category') {
+      if (!config.beltTypes.some((c: any) => c.id === data.id)) {
+        config.beltTypes.push(data);
+      } else {
+        return res.status(400).json({ error: 'Category with same ID already exists in configuration' });
+      }
+    } else if (delItem.type === 'style') {
+      const parentCategoryId = data.parentCategoryId;
+      const styleObj = data.style;
+      const category = config.beltTypes.find((c: any) => c.id === parentCategoryId);
+      if (!category) {
+        return res.status(400).json({ error: `Cannot restore: Parent Category does not exist anymore` });
+      }
+      if (!Array.isArray(category.styles)) category.styles = [];
+      if (!category.styles.some((s: any) => s.id === styleObj.id)) {
+        category.styles.push(styleObj);
+      } else {
+        return res.status(400).json({ error: 'Style already exists in Category' });
+      }
+    } else if (delItem.type === 'bom') {
+      const { bomItem, parentCategoryId, parentStyleId } = data;
+      const category = config.beltTypes.find((c: any) => c.id === parentCategoryId);
+      if (!category) {
+        return res.status(400).json({ error: `Cannot restore: Parent Category does not exist` });
+      }
+      const style = category.styles?.find((s: any) => s.id === parentStyleId);
+      if (!style) {
+        return res.status(400).json({ error: `Cannot restore: Parent Style does not exist` });
+      }
+      if (!Array.isArray(style.bom)) style.bom = [];
+      if (!style.bom.some((b: any) => b.id === bomItem.id)) {
+        style.bom.push(bomItem);
+      } else {
+        return res.status(400).json({ error: 'Component already exists in Style BOM' });
+      }
+    }
+
+    // 4. Update system_config in PG
+    await pool.query(
+      'UPDATE system_config SET data = $1 WHERE id = $2',
+      [JSON.stringify(config), 'default']
+    );
+
+    // 5. Delete from deleted_configs history
+    await pool.query('DELETE FROM deleted_configs WHERE id = $1', [id]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to restore config', err);
+    res.status(500).json({ error: 'Failed to restore configuration item' });
+  }
+});
+
+app.delete('/api/settings/config/deleted/:id', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    await pool.query('DELETE FROM deleted_configs WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to purge deleted config log', err);
+    res.status(500).json({ error: 'Failed to purge configuration log' });
   }
 });
 
