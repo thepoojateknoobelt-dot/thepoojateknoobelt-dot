@@ -164,6 +164,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
   const [rateHistoryItem, setRateHistoryItem] = useState<{ itemId: string; name: string } | null>(null);
   const [rateHistoryList, setRateHistoryList] = useState<{ oldRate: number; newRate: number; changedBy: string; changedAt: string }[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [configTab, setConfigTab] = useState<'belts' | 'settings'>('belts');
 
   const openRateHistory = async (itemId: string, name: string) => {
     setRateHistoryItem({ itemId, name });
@@ -473,121 +474,147 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {/* Dynamic Tab Switcher */}
+      <div className="flex border-b border-zinc-200 mt-2 shrink-0">
+        <button
+          onClick={() => setConfigTab('belts')}
+          className={cn(
+            "px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5",
+            configTab === 'belts'
+              ? "border-zinc-900 text-zinc-900"
+              : "border-transparent text-zinc-400 hover:text-zinc-650"
+          )}
+        >
+          📂 Belt Configuration
+        </button>
+        <button
+          onClick={() => setConfigTab('settings')}
+          className={cn(
+            "px-4 py-2 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5",
+            configTab === 'settings'
+              ? "border-zinc-900 text-zinc-900"
+              : "border-transparent text-zinc-400 hover:text-zinc-650"
+          )}
+        >
+          ⚙️ Global Settings & Companies
+        </button>
+      </div>
 
-
-        <Card className="border-zinc-200 shadow-sm">
-          <CardHeader className="flex flex-row items-center gap-4">
-            <div className="p-2 bg-zinc-100 rounded-lg">
-              <Percent className="h-5 w-5 text-zinc-900" />
-            </div>
-            <div>
-              <CardTitle>Global Constants</CardTitle>
-              <CardDescription>Tax rates and fix costs</CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Purchase GST (%)</Label>
-              <Input type="number" className="border-zinc-400" value={localConfig.constants.purchaseGst} onChange={(e) => updateConstant('purchaseGst', e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Fix Cost (%)</Label>
-              <Input type="number" className="border-zinc-400" value={localConfig.constants.fixCost} onChange={(e) => updateConstant('fixCost', e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Default Profit (%)</Label>
-              <Input type="number" className="border-zinc-400" value={localConfig.constants.defaultProfit} onChange={(e) => updateConstant('defaultProfit', e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Sale GST (%)</Label>
-              <Input type="number" className="border-zinc-400" value={localConfig.constants.saleGst} onChange={(e) => updateConstant('saleGst', e.target.value)} />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-zinc-200 shadow-sm bg-white flex flex-col justify-between">
-          <CardHeader className="flex flex-row items-center gap-4 py-4 border-b">
-            <div className="p-2 bg-zinc-100 rounded-lg">
-              <Building2 className="h-5 w-5 text-zinc-900" />
-            </div>
-            <div>
-              <CardTitle>Company Management</CardTitle>
-              <CardDescription>Manage child companies (add, rename, delete)</CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent className="p-4 flex-1 flex flex-col space-y-4">
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Input
-                  type="text"
-                  placeholder="Enter new company name..."
-                  className="border-zinc-300 bg-white h-9"
-                  value={newCompanyName}
-                  onChange={(e) => setNewCompanyName(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAddCompany()}
-                />
+      {configTab === 'settings' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in duration-200">
+          <Card className="border-zinc-200 shadow-sm bg-white">
+            <CardHeader className="flex flex-row items-center gap-4 py-4 border-b">
+              <div className="p-2 bg-zinc-100 rounded-lg">
+                <Percent className="h-5 w-5 text-zinc-900" />
               </div>
-              <Button onClick={handleAddCompany} size="sm" className="bg-zinc-900 hover:bg-zinc-800 text-white h-9">
-                Add
-              </Button>
-            </div>
+              <div>
+                <CardTitle>Global Constants</CardTitle>
+                <CardDescription>Tax rates and fix costs</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
+              <div className="space-y-2">
+                <Label>Purchase GST (%)</Label>
+                <Input type="number" className="border-zinc-400" value={localConfig.constants.purchaseGst} onChange={(e) => updateConstant('purchaseGst', e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Fix Cost (%)</Label>
+                <Input type="number" className="border-zinc-400" value={localConfig.constants.fixCost} onChange={(e) => updateConstant('fixCost', e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Default Profit (%)</Label>
+                <Input type="number" className="border-zinc-400" value={localConfig.constants.defaultProfit} onChange={(e) => updateConstant('defaultProfit', e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Sale GST (%)</Label>
+                <Input type="number" className="border-zinc-400" value={localConfig.constants.saleGst} onChange={(e) => updateConstant('saleGst', e.target.value)} />
+              </div>
+            </CardContent>
+          </Card>
 
-            <div className="border border-zinc-200 rounded-lg overflow-hidden flex-1 max-h-[160px] overflow-y-auto divide-y divide-zinc-100 bg-zinc-50/30">
-              {isLoadingCompanies ? (
-                <div className="p-4 text-center text-xs text-zinc-400">Loading companies...</div>
-              ) : companies.length === 0 ? (
-                <div className="p-4 text-center text-xs text-zinc-400">No companies added yet.</div>
-              ) : (
-                companies.map((company) => (
-                  <div key={company.id} className="flex items-center justify-between p-2.5 px-3 bg-white hover:bg-zinc-50 transition-colors">
-                    {editingCompany && editingCompany.id === company.id ? (
-                      <div className="flex items-center gap-2 w-full">
-                        <Input
-                          type="text"
-                          className="h-7 text-xs border-zinc-400 bg-white"
-                          value={editingCompany.name}
-                          onChange={(e) => setEditingCompany({ ...editingCompany, name: e.target.value })}
-                          onKeyDown={(e) => e.key === 'Enter' && handleUpdateCompany()}
-                        />
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-emerald-600 hover:bg-emerald-50" onClick={handleUpdateCompany}>
-                          <Save className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-rose-600 hover:bg-rose-50" onClick={() => setEditingCompany(null)}>
-                          <X className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    ) : (
-                      <>
-                        <span className="text-xs font-bold text-zinc-800">{company.name}</span>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100"
-                            onClick={() => setEditingCompany({ id: company.id, name: company.name })}
-                          >
-                            <Edit2 className="h-3.5 w-3.5" />
+          <Card className="border-zinc-200 shadow-sm bg-white flex flex-col justify-between">
+            <CardHeader className="flex flex-row items-center gap-4 py-4 border-b">
+              <div className="p-2 bg-zinc-100 rounded-lg">
+                <Building2 className="h-5 w-5 text-zinc-900" />
+              </div>
+              <div>
+                <CardTitle>Company Management</CardTitle>
+                <CardDescription>Manage child companies (add, rename, delete)</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="p-4 flex-1 flex flex-col space-y-4">
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Input
+                    type="text"
+                    placeholder="Enter new company name..."
+                    className="border-zinc-300 bg-white h-9"
+                    value={newCompanyName}
+                    onChange={(e) => setNewCompanyName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddCompany()}
+                  />
+                </div>
+                <Button onClick={handleAddCompany} size="sm" className="bg-zinc-900 hover:bg-zinc-800 text-white h-9">
+                  Add
+                </Button>
+              </div>
+
+              <div className="border border-zinc-200 rounded-lg overflow-hidden flex-1 max-h-[160px] overflow-y-auto divide-y divide-zinc-100 bg-zinc-50/30">
+                {isLoadingCompanies ? (
+                  <div className="p-4 text-center text-xs text-zinc-400">Loading companies...</div>
+                ) : companies.length === 0 ? (
+                  <div className="p-4 text-center text-xs text-zinc-400">No companies added yet.</div>
+                ) : (
+                  companies.map((company) => (
+                    <div key={company.id} className="flex items-center justify-between p-2.5 px-3 bg-white hover:bg-zinc-50 transition-colors">
+                      {editingCompany && editingCompany.id === company.id ? (
+                        <div className="flex items-center gap-2 w-full">
+                          <Input
+                            type="text"
+                            className="h-7 text-xs border-zinc-400 bg-white"
+                            value={editingCompany.name}
+                            onChange={(e) => setEditingCompany({ ...editingCompany, name: e.target.value })}
+                            onKeyDown={(e) => e.key === 'Enter' && handleUpdateCompany()}
+                          />
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-emerald-600 hover:bg-emerald-50" onClick={handleUpdateCompany}>
+                            <Save className="h-3.5 w-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-zinc-400 hover:text-rose-500 hover:bg-rose-50"
-                            onClick={() => handleDeleteCompany(company.id, company.name)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-rose-600 hover:bg-rose-50" onClick={() => setEditingCompany(null)}>
+                            <X className="h-3.5 w-3.5" />
                           </Button>
                         </div>
-                      </>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-zinc-200 shadow-md md:col-span-2 overflow-hidden bg-white">
+                      ) : (
+                        <>
+                          <span className="text-xs font-bold text-zinc-800">{company.name}</span>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100"
+                              onClick={() => setEditingCompany({ id: company.id, name: company.name })}
+                            >
+                              <Edit2 className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-zinc-400 hover:text-rose-500 hover:bg-rose-50"
+                              onClick={() => handleDeleteCompany(company.id, company.name)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      ) : (
+        <Card className="border-zinc-200 shadow-md overflow-hidden bg-white animate-in fade-in duration-200">
           <CardHeader className="flex flex-row items-center justify-between bg-zinc-50/50 border-b py-4">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-zinc-900 rounded-lg shadow-lg">
@@ -599,7 +626,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
               </div>
             </div>
             <Button 
-               className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2 h-9 px-4 rounded-lg font-bold text-xs uppercase tracking-wider shadow-sm"
+               className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2 h-9 px-4 rounded-lg font-bold text-xs uppercase tracking-wider shadow-sm cursor-pointer"
                onClick={handleSave}
                disabled={isSaving}
             >
@@ -608,7 +635,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
             </Button>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="flex h-[500px] divide-x divide-zinc-100 bg-white">
+            <div className="flex h-[600px] divide-x divide-zinc-100 bg-white">
               
               {/* 1. CATEGORY COLUMN */}
               <div 
@@ -1409,10 +1436,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
             </div>
           </CardContent>
         </Card>
-
-
-
-      </div>
+      )}
 
       <Dialog open={!!editingBOM} onOpenChange={(open) => !open && setEditingBOM(null)}>
         <DialogContent className="max-w-2xl sm:max-w-2xl">
