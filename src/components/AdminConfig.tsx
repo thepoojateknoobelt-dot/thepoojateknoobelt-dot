@@ -1035,7 +1035,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                         <div className="flex items-center gap-2 text-xs text-blue-800 font-medium">
                                           {isArea ? (
                                             <>
-                                              <div className="p-1 bg-blue-100 rounded text-blue-700">L Ãƒâ€” W</div>
+                                              <div className="p-1 bg-blue-100 rounded text-blue-700">L × W</div>
                                               <span>Calculated by Area (Sq. Unit)</span>
                                             </>
                                           ) : (
@@ -1049,7 +1049,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
 
                                       <div className="space-y-1.5">
                                         <Label className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-1">
-                                          <span>Unit Rate (Ã¢â€šÂ¹)</span>
+                                          <span>Unit Rate (₹)</span>
                                           <Info 
                                             className="h-3.5 w-3.5 text-zinc-400 hover:text-blue-600 hover:scale-110 transition-all cursor-pointer"
                                             onClick={() => openRateHistory(item.id, item.name)}
@@ -1242,7 +1242,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                                )}
                                              </Label>
                                              <div className="relative">
-                                               <div className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-bold">Ã¢â€šÂ¹</div>
+                                               <div className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-bold">₹</div>
                                                <Input 
                                                  type="number"
                                                  className={cn(
@@ -1325,7 +1325,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                            </Button>
                                          </div>
 
-                                         {/* Ã¢â€â‚¬Ã¢â€â‚¬ FORMATION TOGGLE & BUILDER Ã¢â€â‚¬Ã¢â€â‚¬ */}
+                                         {/* ── FORMATION TOGGLE & BUILDER ── */}
                                          <div className="border-t border-zinc-100 pt-2.5 mt-0.5">
                                            <div className="flex items-center gap-2 mb-2">
                                              <button
@@ -1394,7 +1394,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                                        }}
                                                      />
                                                      <div className="relative w-[60px] shrink-0">
-                                                       <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400">Ã¢â€šÂ¹</span>
+                                                       <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400">₹</span>
                                                        <Input
                                                          type="number"
                                                          placeholder="Rate"
@@ -1461,7 +1461,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                                    <div className="flex items-center justify-between pt-1.5 border-t border-violet-100">
                                                      <span className="text-[9px] text-violet-500 font-bold">Effective Combined Rate:</span>
                                                      <span className="text-[10px] font-black text-violet-700 font-mono">
-                                                       Ã¢â€šÂ¹{preview.toFixed(2)} <span className="text-[8px] font-normal">/ {opt.unit || item.unit}</span>
+                                                       ₹{preview.toFixed(2)} <span className="text-[8px] font-normal">/ {opt.unit || item.unit}</span>
                                                      </span>
                                                    </div>
                                                  );
@@ -1469,7 +1469,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                              </div>
                                            )}
                                          </div>
-                                         {/* Ã¢â€â‚¬Ã¢â€â‚¬ END FORMATION Ã¢â€â‚¬Ã¢â€â‚¬ */}
+                                         {/* ── END FORMATION ── */}
                                        </div>
                                      ))}
                                     {(!item.options || item.options.length === 0) && (
@@ -1603,7 +1603,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                           <span className="bg-blue-50 text-[10px] px-1.5 py-0.5 rounded font-mono font-bold text-blue-600 uppercase tracking-tighter">
                             ={item.formula}
                           </span>
-                             <span className="text-xs text-zinc-500 ml-auto font-mono">Rate: Ã¢â€šÂ¹{item.rate}/{item.unit}</span>
+                             <span className="text-xs text-zinc-500 ml-auto font-mono">Rate: ₹{item.rate}/{item.unit}</span>
                           </div>
                       </div>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-300 hover:text-red-500" onClick={() => removeBOMItem(i)}>
@@ -1625,7 +1625,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
       <Dialog open={categoryModal.isOpen} onOpenChange={(open) => !open && setCategoryModal({ ...categoryModal, isOpen: false })}>
         <DialogContent className="sm:max-w-[380px]">
           <DialogHeader>
-            <DialogTitle>{categoryModal.mode === 'add' ? 'Ã¢Å¾â€¢ Add New Category' : 'Ã¢Å“ÂÃ¯Â¸Â Edit Category'}</DialogTitle>
+            <DialogTitle>{categoryModal.mode === 'add' ? '➕ Add New Category' : '📝 Edit Category'}</DialogTitle>
             <DialogDescription>
               Set the category name and its GST rate.
             </DialogDescription>
@@ -1706,9 +1706,9 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                   <div key={idx} className="flex items-start justify-between p-3 rounded-xl bg-zinc-50 border border-zinc-150 hover:border-zinc-200 transition-colors">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-zinc-400 text-xs font-bold line-through">Ã¢â€šÂ¹{entry.oldRate}</span>
-                        <span className="text-zinc-400 text-xs font-bold">Ã¢â€ â€™</span>
-                        <span className="text-emerald-600 text-sm font-black">Ã¢â€šÂ¹{entry.newRate}</span>
+                        <span className="text-zinc-400 text-xs font-bold line-through">₹{entry.oldRate}</span>
+                        <span className="text-zinc-400 text-xs font-bold">→</span>
+                        <span className="text-emerald-600 text-sm font-black">₹{entry.newRate}</span>
                       </div>
                       <p className="text-[10px] text-zinc-500 font-medium">Changed by: <span className="font-bold text-zinc-700">{entry.changedBy}</span></p>
                     </div>
