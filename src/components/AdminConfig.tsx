@@ -53,28 +53,39 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
   };
 
   const verifyDeletionCode = async (itemName: string): Promise<boolean> => {
-    if (user?.role === 'admin' && user?.hasDeletionCode) {
-      const entered = prompt(`Enter Deletion Security Code to delete "${itemName}":`);
-      if (entered === null) return false;
-      try {
-        const res = await fetch('/api/auth/verify-deletion-code', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code: entered })
-        });
-        if (res.ok) {
-          return true;
-        } else {
-          const data = await res.json();
-          alert(data.error || "Incorrect security code! Deletion cancelled.");
-          return false;
+    if (user?.role !== 'admin') return true; // Non-admins skip
+    // Always check with server - don't rely on stale localStorage hasDeletionCode
+    try {
+      // First, check if this admin has a deletion code configured
+      const checkRes = await fetch('/api/auth/me');
+      if (checkRes.ok) {
+        const checkData = await checkRes.json();
+        if (!checkData.user?.hasDeletionCode) {
+          return true; // No code set, allow deletion
         }
-      } catch (err) {
-        alert("Failed to verify security code due to network/server error.");
+      }
+    } catch {
+      // If check fails, still proceed to prompt for safety
+    }
+    const entered = prompt(`Enter Deletion Security Code to delete "${itemName}":`);
+    if (entered === null) return false; // User cancelled
+    try {
+      const res = await fetch('/api/auth/verify-deletion-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: entered })
+      });
+      if (res.ok) {
+        return true;
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Incorrect security code! Deletion cancelled.');
         return false;
       }
+    } catch (err) {
+      alert('Failed to verify security code due to network/server error.');
+      return false;
     }
-    return true;
   };
 
   React.useEffect(() => {
@@ -510,7 +521,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
               : "border-transparent text-zinc-400 hover:text-zinc-650"
           )}
         >
-          Ã°Å¸â€œâ€š Belt Configuration
+          📔 Belt Configuration
         </button>
         <button
           onClick={() => setConfigTab('settings')}
@@ -521,7 +532,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
               : "border-transparent text-zinc-400 hover:text-zinc-650"
           )}
         >
-          Ã¢Å¡â„¢Ã¯Â¸Â Global Settings & Companies
+          ⚙️ Global Settings & Companies
         </button>
       </div>
 
