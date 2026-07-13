@@ -485,7 +485,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
               : "border-transparent text-zinc-400 hover:text-zinc-650"
           )}
         >
-          📂 Belt Configuration
+          ðŸ“‚ Belt Configuration
         </button>
         <button
           onClick={() => setConfigTab('settings')}
@@ -496,7 +496,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
               : "border-transparent text-zinc-400 hover:text-zinc-650"
           )}
         >
-          ⚙️ Global Settings & Companies
+          âš™ï¸ Global Settings & Companies
         </button>
       </div>
 
@@ -528,6 +528,17 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
               <div className="space-y-2">
                 <Label>Sale GST (%)</Label>
                 <Input type="number" className="border-zinc-400" value={localConfig.constants.saleGst} onChange={(e) => updateConstant('saleGst', e.target.value)} />
+              </div>
+              <div className="space-y-2 col-span-1 sm:col-span-2 pt-2 border-t border-zinc-100">
+                <Label className="text-zinc-700 font-bold">Deletion Security Code</Label>
+                <Input 
+                  type="password" 
+                  placeholder="Set password required for deletions..." 
+                  className="border-zinc-400 font-mono" 
+                  value={localConfig.constants.deletionCode || ''} 
+                  onChange={(e) => updateConstant('deletionCode', e.target.value)} 
+                />
+                <p className="text-[10px] text-zinc-400 italic">When configured, this code must be entered before deleting any Category, Style, Component, or Sub-category.</p>
               </div>
             </CardContent>
           </Card>
@@ -713,6 +724,14 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                               onClick={(e) => {
                                 e.stopPropagation();
                                 if (window.confirm(`Are you sure you want to delete Category "${cat.name}"? All associated styles and BOMs will be deleted.`)) {
+                                  const securityCode = localConfig.constants.deletionCode;
+                                  if (securityCode && securityCode.trim() !== '') {
+                                    const entered = prompt(`Enter Deletion Security Code to delete Category "${cat.name}":`);
+                                    if (entered !== securityCode) {
+                                      alert("Incorrect security code! Deletion cancelled.");
+                                      return;
+                                    }
+                                  }
                                   removeItem('beltTypes', idx);
                                   setSelectedCatIdx(null);
                                   setSelectedStyleIdx(null);
@@ -823,9 +842,20 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   if (window.confirm(`Are you sure you want to delete Style "${style.name}"?`)) {
-                                    removeStyle(selectedCatIdx!, idx);
+                                    const securityCode = localConfig.constants.deletionCode;
+                                    if (securityCode && securityCode.trim() !== '') {
+                                      const entered = prompt(`Enter Deletion Security Code to delete Style "${style.name}":`);
+                                      if (entered !== securityCode) {
+                                        alert("Incorrect security code! Deletion cancelled.");
+                                        return;
+                                      }
+                                    }
+                                    const updated = [...localConfig.beltTypes];
+                                    updated[selectedCatIdx!].styles.splice(idx, 1);
+                                    setLocalConfig({ ...localConfig, beltTypes: updated });
                                     setSelectedStyleIdx(null);
                                     setSelectedBOMIdx(null);
+                                    saveConfig(updated);
                                   }
                                 }} 
                               />
@@ -854,84 +884,120 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
               )}
 
               {/* 3. BOM ITEM COLUMN */}
-              <div className={cn(
-                "flex flex-col border-r border-zinc-150 transition-all duration-300",
-                selectedStyleIdx === null ? "hidden" : "flex-1 min-w-[220px]"
-              )}>
-                <div className="p-3 bg-zinc-50/80 border-b flex items-center justify-between">
-                   <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">3. BILL OF MATERIAL</span>
-                   <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className="h-6 w-6 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 hover:scale-110 transition-transform disabled:opacity-30" 
-                    disabled={selectedStyleIdx === null}
-                    onClick={() => {
-                      const name = prompt('New Component Name:');
-                      if (name && selectedCatIdx !== null && selectedStyleIdx !== null) {
-                        const updated = [...localConfig.beltTypes];
-                        const style = updated[selectedCatIdx].styles[selectedStyleIdx];
-                         style.bom = [...(style.bom || []), { id: Date.now().toString(), name: name.trim(), rate: 0, formula: 'L * W', unit: 'sqm' }];
-                        setLocalConfig({ ...localConfig, beltTypes: updated });
-                      }
-                    }}
-                  >
-                    <ListPlus className="h-3 w-3" />
-                  </Button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                  {selectedStyleIdx !== null && localConfig.beltTypes[selectedCatIdx!]?.styles?.[selectedStyleIdx] ? (
-                    (Array.isArray(localConfig?.beltTypes?.[selectedCatIdx!]?.styles?.[selectedStyleIdx]?.bom) ? localConfig.beltTypes[selectedCatIdx!].styles[selectedStyleIdx].bom : [])?.map?.((item, idx) => (
-                      <div 
-                        key={idx} 
-                        onClick={() => setSelectedBOMIdx(idx)}
-                        className={cn(
-                          "group flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all duration-200 border-2",
-                          selectedBOMIdx === idx 
-                            ? "bg-blue-50 border-blue-200 shadow-sm" 
-                            : "border-transparent hover:bg-zinc-50 hover:border-zinc-100"
-                        )}
-                      >
-                        <div className="flex flex-col min-w-0 flex-1 mr-1">
-                          <span className={cn("text-xs font-bold truncate", selectedBOMIdx === idx ? "text-blue-700" : "text-zinc-700")}>
-                            {item.name.toUpperCase()}
-                          </span>
-                           <span className="text-[10px] text-blue-500 font-mono font-bold tracking-tighter">={item.formula}</span>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <Edit2 
-                            className="h-3 w-3 text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-blue-600 cursor-pointer" 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const newName = prompt('Edit Component Name:', item.name);
-                              if (newName && newName.trim()) {
-                                const updated = [...localConfig.beltTypes];
-                                updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[idx].name = newName.trim();
-                                setLocalConfig({ ...localConfig, beltTypes: updated });
-                              }
-                            }}
-                          />
-                          <Trash2 
-                            className="h-3 w-3 text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-red-500 cursor-pointer" 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (window.confirm(`Are you sure you want to delete Component "${item.name}"?`)) {
-                                const updated = [...localConfig.beltTypes];
-                                updated[selectedCatIdx!].styles[selectedStyleIdx!].bom.splice(idx, 1);
-                                setLocalConfig({ ...localConfig, beltTypes: updated });
-                                setSelectedBOMIdx(null);
-                                saveConfig(updated);
-                              }
-                            }} 
-                          />
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="h-full flex items-center justify-center p-8 text-center text-zinc-400">
-                      <p className="text-xs italic">Select a style first</p>
+              <div 
+                className={cn(
+                  "flex flex-col border-r border-zinc-150 transition-all duration-300",
+                  selectedStyleIdx === null
+                    ? "hidden"
+                    : selectedBOMIdx !== null
+                      ? "w-14 shrink-0 bg-zinc-50/80 hover:bg-zinc-100/90 cursor-pointer group"
+                      : "flex-1 min-w-[220px] bg-white"
+                )}
+                onClick={selectedBOMIdx !== null ? () => { setSelectedBOMIdx(null); } : undefined}
+                title={selectedBOMIdx !== null ? "Click to change Component" : undefined}
+              >
+                {selectedBOMIdx !== null ? (
+                  <div className="py-4 flex flex-col items-center flex-1">
+                    <div className="h-6 w-6 rounded-full bg-zinc-200 text-zinc-650 flex items-center justify-center mb-6 group-hover:bg-blue-600 group-hover:text-white font-black text-[10px] shadow-sm transition-colors">
+                      3
                     </div>
-                  )}
-                </div>
+                    <div 
+                      className="flex-1 flex items-center justify-center select-none text-[10px] font-black uppercase tracking-widest text-zinc-500 group-hover:text-blue-600 transition-colors whitespace-nowrap"
+                      style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+                    >
+                      {localConfig.beltTypes[selectedCatIdx!]?.styles?.[selectedStyleIdx!]?.bom?.[selectedBOMIdx]?.name || 'Component'}
+                    </div>
+                    <div className="mt-4 text-zinc-450 group-hover:text-blue-500 transition-colors">
+                      <ChevronLeft className="h-4 w-4" />
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="p-3 bg-zinc-50/80 border-b flex items-center justify-between">
+                       <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">3. BILL OF MATERIAL</span>
+                       <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-6 w-6 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 hover:scale-110 transition-transform disabled:opacity-30" 
+                        disabled={selectedStyleIdx === null}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const name = prompt('New Component Name:');
+                          if (name && selectedCatIdx !== null && selectedStyleIdx !== null) {
+                            const updated = [...localConfig.beltTypes];
+                            const style = updated[selectedCatIdx].styles[selectedStyleIdx];
+                            style.bom = [...(style.bom || []), { id: Date.now().toString(), name: name.trim(), rate: 0, formula: 'L * W', unit: 'sqm' }];
+                            setLocalConfig({ ...localConfig, beltTypes: updated });
+                          }
+                        }}
+                      >
+                        <ListPlus className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                      {selectedStyleIdx !== null && localConfig.beltTypes[selectedCatIdx!]?.styles?.[selectedStyleIdx] ? (
+                        (Array.isArray(localConfig?.beltTypes?.[selectedCatIdx!]?.styles?.[selectedStyleIdx]?.bom) ? localConfig.beltTypes[selectedCatIdx!].styles[selectedStyleIdx].bom : [])?.map?.((item, idx) => (
+                          <div 
+                            key={idx} 
+                            onClick={() => setSelectedBOMIdx(idx)}
+                            className={cn(
+                              "group flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all duration-200 border-2",
+                              selectedBOMIdx === idx 
+                                ? "bg-blue-50 border-blue-200 shadow-sm" 
+                                : "border-transparent hover:bg-zinc-50 hover:border-zinc-100"
+                            )}
+                          >
+                            <div className="flex flex-col min-w-0 flex-1 mr-1">
+                              <span className={cn("text-xs font-bold truncate", selectedBOMIdx === idx ? "text-blue-700" : "text-zinc-700")}>
+                                {item.name.toUpperCase()}
+                              </span>
+                               <span className="text-[10px] text-blue-500 font-mono font-bold tracking-tighter">={item.formula}</span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Edit2 
+                                className="h-3 w-3 text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-blue-600 cursor-pointer" 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const newName = prompt('Edit Component Name:', item.name);
+                                  if (newName && newName.trim()) {
+                                    const updated = [...localConfig.beltTypes];
+                                    updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[idx].name = newName.trim();
+                                    setLocalConfig({ ...localConfig, beltTypes: updated });
+                                  }
+                                }}
+                              />
+                              <Trash2 
+                                className="h-3 w-3 text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-red-500 cursor-pointer" 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (window.confirm(`Are you sure you want to delete Component "${item.name}"?`)) {
+                                    const securityCode = localConfig.constants.deletionCode;
+                                    if (securityCode && securityCode.trim() !== '') {
+                                      const entered = prompt(`Enter Deletion Security Code to delete Component "${item.name}":`);
+                                      if (entered !== securityCode) {
+                                        alert("Incorrect security code! Deletion cancelled.");
+                                        return;
+                                      }
+                                    }
+                                    const updated = [...localConfig.beltTypes];
+                                    updated[selectedCatIdx!].styles[selectedStyleIdx!].bom.splice(idx, 1);
+                                    setLocalConfig({ ...localConfig, beltTypes: updated });
+                                    setSelectedBOMIdx(null);
+                                    saveConfig(updated);
+                                  }
+                                }} 
+                              />
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="h-full flex items-center justify-center p-8 text-center text-zinc-400">
+                          <p className="text-xs italic">Select a style first</p>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* 4. DETAILS COLUMN */}
@@ -962,7 +1028,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                         <div className="flex items-center gap-2 text-xs text-blue-800 font-medium">
                                           {isArea ? (
                                             <>
-                                              <div className="p-1 bg-blue-100 rounded text-blue-700">L × W</div>
+                                              <div className="p-1 bg-blue-100 rounded text-blue-700">L Ã— W</div>
                                               <span>Calculated by Area (Sq. Unit)</span>
                                             </>
                                           ) : (
@@ -976,7 +1042,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
 
                                       <div className="space-y-1.5">
                                         <Label className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-1">
-                                          <span>Unit Rate (₹)</span>
+                                          <span>Unit Rate (â‚¹)</span>
                                           <Info 
                                             className="h-3.5 w-3.5 text-zinc-400 hover:text-blue-600 hover:scale-110 transition-all cursor-pointer"
                                             onClick={() => openRateHistory(item.id, item.name)}
@@ -1169,7 +1235,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                                )}
                                              </Label>
                                              <div className="relative">
-                                               <div className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-bold">₹</div>
+                                               <div className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-bold">â‚¹</div>
                                                <Input 
                                                  type="number"
                                                  className={cn(
@@ -1239,16 +1305,26 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                              size="icon" 
                                              className="h-8 w-8 text-zinc-300 hover:text-rose-500 hover:bg-rose-50 transition-colors shrink-0"
                                              onClick={() => {
-                                               const updated = [...localConfig.beltTypes];
-                                               updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options.splice(optIdx, 1);
-                                               setLocalConfig({ ...localConfig, beltTypes: updated });
+                                                if (window.confirm(`Are you sure you want to delete Sub-category "${opt.name}"?`)) {
+                                                  const securityCode = localConfig.constants.deletionCode;
+                                                  if (securityCode && securityCode.trim() !== '') {
+                                                    const entered = prompt(`Enter Deletion Security Code to delete Sub-category "${opt.name}":`);
+                                                    if (entered !== securityCode) {
+                                                      alert("Incorrect security code! Deletion cancelled.");
+                                                      return;
+                                                    }
+                                                  }
+                                                  const updated = [...localConfig.beltTypes];
+                                                  updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options.splice(optIdx, 1);
+                                                  setLocalConfig({ ...localConfig, beltTypes: updated });
+                                                }
                                              }}
                                            >
                                              <Trash2 className="h-4 w-4" />
                                            </Button>
                                          </div>
 
-                                         {/* ── FORMATION TOGGLE & BUILDER ── */}
+                                         {/* â”€â”€ FORMATION TOGGLE & BUILDER â”€â”€ */}
                                          <div className="border-t border-zinc-100 pt-2.5 mt-0.5">
                                            <div className="flex items-center gap-2 mb-2">
                                              <button
@@ -1317,7 +1393,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                                        }}
                                                      />
                                                      <div className="relative w-[60px] shrink-0">
-                                                       <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400">₹</span>
+                                                       <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400">â‚¹</span>
                                                        <Input
                                                          type="number"
                                                          placeholder="Rate"
@@ -1384,7 +1460,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                                    <div className="flex items-center justify-between pt-1.5 border-t border-violet-100">
                                                      <span className="text-[9px] text-violet-500 font-bold">Effective Combined Rate:</span>
                                                      <span className="text-[10px] font-black text-violet-700 font-mono">
-                                                       ₹{preview.toFixed(2)} <span className="text-[8px] font-normal">/ {opt.unit || item.unit}</span>
+                                                       â‚¹{preview.toFixed(2)} <span className="text-[8px] font-normal">/ {opt.unit || item.unit}</span>
                                                      </span>
                                                    </div>
                                                  );
@@ -1392,7 +1468,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                              </div>
                                            )}
                                          </div>
-                                         {/* ── END FORMATION ── */}
+                                         {/* â”€â”€ END FORMATION â”€â”€ */}
                                        </div>
                                      ))}
                                     {(!item.options || item.options.length === 0) && (
@@ -1526,7 +1602,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                           <span className="bg-blue-50 text-[10px] px-1.5 py-0.5 rounded font-mono font-bold text-blue-600 uppercase tracking-tighter">
                             ={item.formula}
                           </span>
-                             <span className="text-xs text-zinc-500 ml-auto font-mono">Rate: ₹{item.rate}/{item.unit}</span>
+                             <span className="text-xs text-zinc-500 ml-auto font-mono">Rate: â‚¹{item.rate}/{item.unit}</span>
                           </div>
                       </div>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-300 hover:text-red-500" onClick={() => removeBOMItem(i)}>
@@ -1548,7 +1624,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
       <Dialog open={categoryModal.isOpen} onOpenChange={(open) => !open && setCategoryModal({ ...categoryModal, isOpen: false })}>
         <DialogContent className="sm:max-w-[380px]">
           <DialogHeader>
-            <DialogTitle>{categoryModal.mode === 'add' ? '➕ Add New Category' : '✏️ Edit Category'}</DialogTitle>
+            <DialogTitle>{categoryModal.mode === 'add' ? 'âž• Add New Category' : 'âœï¸ Edit Category'}</DialogTitle>
             <DialogDescription>
               Set the category name and its GST rate.
             </DialogDescription>
@@ -1629,9 +1705,9 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                   <div key={idx} className="flex items-start justify-between p-3 rounded-xl bg-zinc-50 border border-zinc-150 hover:border-zinc-200 transition-colors">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-zinc-400 text-xs font-bold line-through">₹{entry.oldRate}</span>
-                        <span className="text-zinc-400 text-xs font-bold">→</span>
-                        <span className="text-emerald-600 text-sm font-black">₹{entry.newRate}</span>
+                        <span className="text-zinc-400 text-xs font-bold line-through">â‚¹{entry.oldRate}</span>
+                        <span className="text-zinc-400 text-xs font-bold">â†’</span>
+                        <span className="text-emerald-600 text-sm font-black">â‚¹{entry.newRate}</span>
                       </div>
                       <p className="text-[10px] text-zinc-500 font-medium">Changed by: <span className="font-bold text-zinc-700">{entry.changedBy}</span></p>
                     </div>
