@@ -1850,13 +1850,29 @@ app.post('/api/settings/config', authenticate, async (req: any, res) => {
                         [logId, 'bom', oldBOM.name, `${oldCat.name} › ${oldStyle.name}`, JSON.stringify({ bomItem: oldBOM, parentCategoryId: oldCat.id, parentStyleId: oldStyle.id })]
                       );
                     } else {
-                      // BOM component is still present -> check for rate changes!
+                      // BOM component is still present -> check for rate changes & sub-category option deletions!
                       const newBOM = newStyle.bom.find((b: any) => b.id === oldBOM.id);
                       if (newBOM) {
                         const changerName = req.user.name || req.user.username || 'Admin';
                         const oldHasOptions = Array.isArray(oldBOM.options) && oldBOM.options.length > 0;
                         const newHasOptions = Array.isArray(newBOM.options) && newBOM.options.length > 0;
                         
+                        // Check for deleted sub-category options!
+                        if (oldHasOptions) {
+                          const newOpts = Array.isArray(newBOM.options) ? newBOM.options : [];
+                          for (const oldOpt of oldBOM.options) {
+                            const isOptStillPresent = newOpts.some((o: any) => o.name === oldOpt.name);
+                            if (!isOptStillPresent) {
+                              const logId = `del-opt-${oldBOM.id}-${oldOpt.name}-${Date.now()}`;
+                              await pool.query(
+                                `INSERT INTO deleted_configs (id, type, name, parent_path, data) 
+                                 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
+                                [logId, 'subcategory', oldOpt.name, `${oldCat.name} › ${oldStyle.name} › ${oldBOM.name}`, JSON.stringify({ option: oldOpt, parentCategoryId: oldCat.id, parentStyleId: oldStyle.id, parentBOMId: oldBOM.id })]
+                              );
+                            }
+                          }
+                        }
+
                         // Main rate change (when no options exist)
                         if (!oldHasOptions && !newHasOptions && oldBOM.rate !== newBOM.rate) {
                           await pool.query(
@@ -1995,6 +2011,26 @@ app.post('/api/settings/config/restore/:id', authenticate, async (req: any, res)
         style.bom.push(bomItem);
       } else {
         return res.status(400).json({ error: 'Component already exists in Style BOM' });
+      }
+    } else if (delItem.type === 'subcategory') {
+      const { option, parentCategoryId, parentStyleId, parentBOMId } = data;
+      const category = config.beltTypes.find((c: any) => c.id === parentCategoryId);
+      if (!category) {
+        return res.status(400).json({ error: `Cannot restore: Parent Category does not exist` });
+      }
+      const style = category.styles?.find((s: any) => s.id === parentStyleId);
+      if (!style) {
+        return res.status(400).json({ error: `Cannot restore: Parent Style does not exist` });
+      }
+      const bomItem = style.bom?.find((b: any) => b.id === parentBOMId);
+      if (!bomItem) {
+        return res.status(400).json({ error: `Cannot restore: Parent BOM Component does not exist` });
+      }
+      if (!Array.isArray(bomItem.options)) bomItem.options = [];
+      if (!bomItem.options.some((o: any) => o.name === option.name)) {
+        bomItem.options.push(option);
+      } else {
+        return res.status(400).json({ error: 'Sub-category Option already exists in BOM Component' });
       }
     }
 

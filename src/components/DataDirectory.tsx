@@ -9,7 +9,7 @@ import { Input } from './ui/input';
 
 interface DeletedItem {
   id: string;
-  type: 'category' | 'style' | 'bom';
+  type: 'category' | 'style' | 'bom' | 'subcategory';
   name: string;
   parentPath: string;
   deletedAt: string;
@@ -93,7 +93,7 @@ export const DataDirectory: React.FC<DataDirectoryProps> = ({ onRefresh }) => {
     }
   };
 
-  const getTypeBadge = (type: 'category' | 'style' | 'bom') => {
+  const getTypeBadge = (type: 'category' | 'style' | 'bom' | 'subcategory') => {
     switch (type) {
       case 'category':
         return <Badge className="bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 uppercase tracking-widest font-black text-[9px] px-2 py-0.5">Category</Badge>;
@@ -101,6 +101,8 @@ export const DataDirectory: React.FC<DataDirectoryProps> = ({ onRefresh }) => {
         return <Badge className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200 uppercase tracking-widest font-black text-[9px] px-2 py-0.5">Style</Badge>;
       case 'bom':
         return <Badge className="bg-teal-50 hover:bg-teal-100 text-teal-700 border-teal-200 uppercase tracking-widest font-black text-[9px] px-2 py-0.5">BOM Component</Badge>;
+      case 'subcategory':
+        return <Badge className="bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200 uppercase tracking-widest font-black text-[9px] px-2 py-0.5">Sub-category</Badge>;
       default:
         return <Badge className="bg-zinc-100 text-zinc-700 uppercase tracking-widest font-black text-[9px]">Unknown</Badge>;
     }
@@ -128,20 +130,6 @@ export const DataDirectory: React.FC<DataDirectoryProps> = ({ onRefresh }) => {
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900">Data Directory</h1>
             <p className="text-xs text-zinc-500 mt-0.5">View and restore deleted configurations (Categories, Styles, and BOM Components).</p>
           </div>
-        </div>
-      </div>
-
-      {/* Info Card explaining how it works */}
-      <div className="bg-amber-50/70 border border-amber-200/80 p-4 rounded-xl flex gap-3 text-amber-800 shadow-xs backdrop-blur-md">
-        <HelpCircle className="h-5 w-5 shrink-0 text-amber-600 mt-0.5" />
-        <div className="text-xs space-y-1.5 leading-relaxed font-medium">
-          <p className="font-bold text-amber-900">How Data Directory Works:</p>
-          <p>
-            Whenever you delete a configuration element (Category, Style, or BOM Component) in the <strong>Configuration</strong> panel and click <strong>Commit Changes</strong>, the system automatically detects the deletion and backups the item here.
-          </p>
-          <p>
-            You can restore any item at any time. When restoring a child item (Style or Component), ensure its parent category or style is still active or restored first!
-          </p>
         </div>
       </div>
 

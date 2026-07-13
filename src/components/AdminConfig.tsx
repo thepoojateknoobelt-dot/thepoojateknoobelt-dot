@@ -888,8 +888,11 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                             onClick={(e) => {
                               e.stopPropagation();
                               if (window.confirm(`Are you sure you want to delete Component "${item.name}"?`)) {
-                                removeBOMItem(idx);
+                                const updated = [...localConfig.beltTypes];
+                                updated[selectedCatIdx!].styles[selectedStyleIdx!].bom.splice(idx, 1);
+                                setLocalConfig({ ...localConfig, beltTypes: updated });
                                 setSelectedBOMIdx(null);
+                                saveConfig(updated);
                               }
                             }} 
                           />
