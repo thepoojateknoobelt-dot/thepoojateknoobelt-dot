@@ -46,7 +46,8 @@ async function initializeDatabase() {
         name VARCHAR(255) DEFAULT 'User' NOT NULL,
         role VARCHAR(50) DEFAULT 'admin' NOT NULL,
         password VARCHAR(255) NOT NULL,
-        username_lower VARCHAR(255) DEFAULT '' NOT NULL
+        username_lower VARCHAR(255) DEFAULT '' NOT NULL,
+        deletion_code VARCHAR(255) DEFAULT ''
       )
     `);
 
@@ -54,6 +55,12 @@ async function initializeDatabase() {
       await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permission VARCHAR(50) DEFAULT 'write' NOT NULL`);
     } catch (alterErr) {
       console.warn('Failed to add permission column to users table:', alterErr);
+    }
+
+    try {
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_code VARCHAR(255) DEFAULT ''`);
+    } catch (alterErr) {
+      console.warn('Failed to add deletion_code column to users table:', alterErr);
     }
 
     try {
@@ -1212,13 +1219,16 @@ app.post('/api/auth/login', async (req, res) => {
       ? ['dashboard', 'calculator', 'quotations', 'clients', 'reports', 'activity', 'users', 'config', 'production', 'nesting_dashboard', 'nesting_cutting', 'nesting_rolls_map', 'nesting_details', 'nesting_stock', 'nesting_production', 'nesting_scrub']
       : (user.allowed_pages || 'dashboard,calculator,quotations,clients').split(',');
     
+    const hasDel = !!(user.deletion_code && user.deletion_code.trim() !== '');
+
     const token = jwt.sign({ 
       id: user.id, 
       username: user.username, 
       role: user.role, 
       name: user.name, 
       permission: user.permission || 'write',
-      allowedPages: userPages
+      allowedPages: userPages,
+      hasDeletionCode: hasDel
     }, JWT_SECRET);
     res.cookie('token', token, cookieOptions).json({ 
       user: { 
@@ -1227,7 +1237,8 @@ app.post('/api/auth/login', async (req, res) => {
         role: user.role, 
         name: user.name, 
         permission: user.permission || 'write',
-        allowedPages: userPages
+        allowedPages: userPages,
+        hasDeletionCode: hasDel
       } 
     });
   } catch (error) {
@@ -1240,12 +1251,58 @@ app.post('/api/auth/logout', (req, res) => {
   res.clearCookie('token').json({ success: true });
 });
 
-app.get('/api/auth/me', authenticate, (req: any, res) => {
+app.post('/api/auth/verify-deletion-code', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { code } = req.body;
+  
+  try {
+    const result = await pool.query('SELECT deletion_code FROM users WHERE id = $1', [req.user.id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const storedHash = result.rows[0].deletion_code;
+    
+    // If no deletion code is configured for this admin, let it pass
+    if (!storedHash || storedHash.trim() === '') {
+      return res.json({ success: true });
+    }
+    
+    const isMatch = storedHash.startsWith('$2')
+      ? bcrypt.compareSync(code, storedHash)
+      : code === storedHash;
+      
+    if (isMatch) {
+      res.json({ success: true });
+    } else {
+      res.status(400).json({ success: false, error: 'Incorrect deletion security code' });
+    }
+  } catch (err) {
+    console.error('Failed to verify deletion code', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/auth/me', authenticate, async (req: any, res) => {
   const email = req.user.role === 'admin' ? 'admin@ptb.com' : 'account@ptb.com';
-  res.json({ 
-    user: req.user,
-    email: email
-  });
+  try {
+    const result = await pool.query('SELECT deletion_code FROM users WHERE id = $1', [req.user.id]);
+    const deletion_code = result.rows[0]?.deletion_code || '';
+    res.json({ 
+      user: {
+        ...req.user,
+        hasDeletionCode: deletion_code.trim() !== ''
+      },
+      email: email
+    });
+  } catch (err) {
+    res.json({ 
+      user: {
+        ...req.user,
+        hasDeletionCode: false
+      },
+      email: email
+    });
+  }
 });
 
 // Helper to get YYMM format
@@ -3370,7 +3427,7 @@ app.post('/api/quotations/bulk-delete', authenticate, async (req: any, res) => {
 app.get('/api/users', authenticate, async (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   try {
-    const result = await pool.query('SELECT id, username, name, role, username_lower, permission, allowed_pages FROM users');
+    const result = await pool.query('SELECT id, username, name, role, username_lower, permission, allowed_pages, deletion_code FROM users');
     res.json(result.rows.map(row => ({
       id: row.id,
       username: row.username,
@@ -3378,6 +3435,7 @@ app.get('/api/users', authenticate, async (req: any, res) => {
       role: row.role,
       usernameLower: row.username_lower,
       permission: row.permission || 'write',
+      hasDeletionCode: !!(row.deletion_code && row.deletion_code.trim() !== ''),
       allowedPages: row.role === 'admin'
         ? ['dashboard', 'calculator', 'quotations', 'clients', 'reports', 'activity', 'users', 'config', 'production', 'nesting_dashboard', 'nesting_cutting', 'nesting_rolls_map', 'nesting_details', 'nesting_stock', 'nesting_production', 'nesting_scrub']
         : (row.allowed_pages || 'dashboard,calculator,quotations,clients').split(',')
@@ -3390,7 +3448,7 @@ app.get('/api/users', authenticate, async (req: any, res) => {
 
 app.post('/api/users', authenticate, async (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
-  const { username, name, role, password, permission = 'write', allowedPages = ['dashboard', 'calculator', 'quotations', 'clients'] } = req.body;
+  const { username, name, role, password, permission = 'write', allowedPages = ['dashboard', 'calculator', 'quotations', 'clients'], deletionCode } = req.body;
   
   try {
     const normalizedUsername = username.toLowerCase().trim().replace(/\s+/g, '_');
@@ -3401,10 +3459,11 @@ app.post('/api/users', authenticate, async (req: any, res) => {
     }
   
     const passwordHash = bcrypt.hashSync(password, 10);
+    const deletionCodeHash = (role === 'admin' && deletionCode && deletionCode.trim() !== '') ? bcrypt.hashSync(deletionCode.trim(), 10) : '';
     const allowedPagesStr = Array.isArray(allowedPages) ? allowedPages.join(',') : 'dashboard,calculator,quotations,clients';
     await pool.query(
-      'INSERT INTO users (id, username, name, role, password, username_lower, permission, allowed_pages) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [normalizedUsername, username, name, role, passwordHash, normalizedUsername, permission, allowedPagesStr]
+      'INSERT INTO users (id, username, name, role, password, username_lower, permission, allowed_pages, deletion_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      [normalizedUsername, username, name, role, passwordHash, normalizedUsername, permission, allowedPagesStr, deletionCodeHash]
     );
     res.json({
       id: normalizedUsername,
@@ -3413,6 +3472,7 @@ app.post('/api/users', authenticate, async (req: any, res) => {
       role,
       usernameLower: normalizedUsername,
       permission,
+      hasDeletionCode: deletionCodeHash !== '',
       allowedPages: role === 'admin'
         ? ['dashboard', 'calculator', 'quotations', 'clients', 'reports', 'activity', 'users', 'config', 'production', 'nesting_dashboard', 'nesting_cutting', 'nesting_rolls_map', 'nesting_details', 'nesting_stock', 'nesting_production', 'nesting_scrub']
         : allowedPages
@@ -3425,23 +3485,32 @@ app.post('/api/users', authenticate, async (req: any, res) => {
 
 app.put('/api/users/:id', authenticate, async (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
-  const { name, role, permission, allowedPages, password } = req.body;
+  const { name, role, permission, allowedPages, password, deletionCode } = req.body;
   try {
     const allowedPagesStr = Array.isArray(allowedPages) ? allowedPages.join(',') : 'dashboard,calculator,quotations,clients';
     
-    let query = 'UPDATE users SET name = $1, role = $2, permission = $3, allowed_pages = $4 WHERE id = $5';
-    let params = [name, role, permission, allowedPagesStr, req.params.id];
+    const updates = ['name = $1', 'role = $2', 'permission = $3', 'allowed_pages = $4'];
+    const params = [name, role, permission, allowedPagesStr];
+    let paramIndex = 5;
 
     if (password && password.trim() !== '') {
       const passwordHash = bcrypt.hashSync(password, 10);
-      query = 'UPDATE users SET name = $1, role = $2, permission = $3, allowed_pages = $4, password = $5 WHERE id = $6';
-      params = [name, role, permission, allowedPagesStr, passwordHash, req.params.id];
+      updates.push(`password = $${paramIndex++}`);
+      params.push(passwordHash);
     }
 
-    const result = await pool.query(
-      query + ' RETURNING id, username, name, role, permission, allowed_pages',
-      params
-    );
+    if (role === 'admin' && deletionCode !== undefined && deletionCode !== null) {
+      if (deletionCode.trim() !== '') {
+        const deletionCodeHash = bcrypt.hashSync(deletionCode.trim(), 10);
+        updates.push(`deletion_code = $${paramIndex++}`);
+        params.push(deletionCodeHash);
+      }
+    }
+
+    params.push(req.params.id);
+    const query = `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, username, name, role, permission, allowed_pages, deletion_code`;
+
+    const result = await pool.query(query, params);
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -3452,6 +3521,7 @@ app.put('/api/users/:id', authenticate, async (req: any, res) => {
       name: row.name,
       role: row.role,
       permission: row.permission,
+      hasDeletionCode: !!(row.deletion_code && row.deletion_code.trim() !== ''),
       allowedPages: row.role === 'admin'
         ? ['dashboard', 'calculator', 'quotations', 'clients', 'reports', 'activity', 'users', 'config', 'production', 'nesting_dashboard', 'nesting_cutting', 'nesting_rolls_map', 'nesting_details', 'nesting_stock', 'nesting_production', 'nesting_scrub']
         : (row.allowed_pages || '').split(',')

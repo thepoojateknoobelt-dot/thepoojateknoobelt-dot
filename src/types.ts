@@ -8,6 +8,7 @@ export interface User {
   password?: string;
   permission?: 'read' | 'write';
   allowedPages?: string[];
+  hasDeletionCode?: boolean;
 }
 
 export interface Rates {

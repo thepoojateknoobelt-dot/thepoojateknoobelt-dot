@@ -52,6 +52,31 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
     }
   };
 
+  const verifyDeletionCode = async (itemName: string): Promise<boolean> => {
+    if (user?.role === 'admin' && user?.hasDeletionCode) {
+      const entered = prompt(`Enter Deletion Security Code to delete "${itemName}":`);
+      if (entered === null) return false;
+      try {
+        const res = await fetch('/api/auth/verify-deletion-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: entered })
+        });
+        if (res.ok) {
+          return true;
+        } else {
+          const data = await res.json();
+          alert(data.error || "Incorrect security code! Deletion cancelled.");
+          return false;
+        }
+      } catch (err) {
+        alert("Failed to verify security code due to network/server error.");
+        return false;
+      }
+    }
+    return true;
+  };
+
   React.useEffect(() => {
     fetchCompanies();
     fetchMaterialStocks();
@@ -485,7 +510,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
               : "border-transparent text-zinc-400 hover:text-zinc-650"
           )}
         >
-          ðŸ“‚ Belt Configuration
+          Ã°Å¸â€œâ€š Belt Configuration
         </button>
         <button
           onClick={() => setConfigTab('settings')}
@@ -496,7 +521,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
               : "border-transparent text-zinc-400 hover:text-zinc-650"
           )}
         >
-          âš™ï¸ Global Settings & Companies
+          Ã¢Å¡â„¢Ã¯Â¸Â Global Settings & Companies
         </button>
       </div>
 
@@ -528,17 +553,6 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
               <div className="space-y-2">
                 <Label>Sale GST (%)</Label>
                 <Input type="number" className="border-zinc-400" value={localConfig.constants.saleGst} onChange={(e) => updateConstant('saleGst', e.target.value)} />
-              </div>
-              <div className="space-y-2 col-span-1 sm:col-span-2 pt-2 border-t border-zinc-100">
-                <Label className="text-zinc-700 font-bold">Deletion Security Code</Label>
-                <Input 
-                  type="password" 
-                  placeholder="Set password required for deletions..." 
-                  className="border-zinc-400 font-mono" 
-                  value={localConfig.constants.deletionCode || ''} 
-                  onChange={(e) => updateConstant('deletionCode', e.target.value)} 
-                />
-                <p className="text-[10px] text-zinc-400 italic">When configured, this code must be entered before deleting any Category, Style, Component, or Sub-category.</p>
               </div>
             </CardContent>
           </Card>
@@ -721,17 +735,11 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                             />
                             <Trash2 
                               className="h-3 w-3 text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-red-500 cursor-pointer" 
-                              onClick={(e) => {
+                              onClick={async (e) => {
                                 e.stopPropagation();
                                 if (window.confirm(`Are you sure you want to delete Category "${cat.name}"? All associated styles and BOMs will be deleted.`)) {
-                                  const securityCode = localConfig.constants.deletionCode;
-                                  if (securityCode && securityCode.trim() !== '') {
-                                    const entered = prompt(`Enter Deletion Security Code to delete Category "${cat.name}":`);
-                                    if (entered !== securityCode) {
-                                      alert("Incorrect security code! Deletion cancelled.");
-                                      return;
-                                    }
-                                  }
+                                  const verified = await verifyDeletionCode(cat.name);
+                                  if (!verified) return;
                                   removeItem('beltTypes', idx);
                                   setSelectedCatIdx(null);
                                   setSelectedStyleIdx(null);
@@ -839,17 +847,11 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                               />
                               <Trash2 
                                 className="h-3 w-3 text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-red-500 cursor-pointer" 
-                                onClick={(e) => {
+                                onClick={async (e) => {
                                   e.stopPropagation();
                                   if (window.confirm(`Are you sure you want to delete Style "${style.name}"?`)) {
-                                    const securityCode = localConfig.constants.deletionCode;
-                                    if (securityCode && securityCode.trim() !== '') {
-                                      const entered = prompt(`Enter Deletion Security Code to delete Style "${style.name}":`);
-                                      if (entered !== securityCode) {
-                                        alert("Incorrect security code! Deletion cancelled.");
-                                        return;
-                                      }
-                                    }
+                                    const verified = await verifyDeletionCode(style.name);
+                                    if (!verified) return;
                                     const updated = [...localConfig.beltTypes];
                                     updated[selectedCatIdx!].styles.splice(idx, 1);
                                     setLocalConfig({ ...localConfig, beltTypes: updated });
@@ -968,17 +970,11 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                               />
                               <Trash2 
                                 className="h-3 w-3 text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-red-500 cursor-pointer" 
-                                onClick={(e) => {
+                                onClick={async (e) => {
                                   e.stopPropagation();
                                   if (window.confirm(`Are you sure you want to delete Component "${item.name}"?`)) {
-                                    const securityCode = localConfig.constants.deletionCode;
-                                    if (securityCode && securityCode.trim() !== '') {
-                                      const entered = prompt(`Enter Deletion Security Code to delete Component "${item.name}":`);
-                                      if (entered !== securityCode) {
-                                        alert("Incorrect security code! Deletion cancelled.");
-                                        return;
-                                      }
-                                    }
+                                    const verified = await verifyDeletionCode(item.name);
+                                    if (!verified) return;
                                     const updated = [...localConfig.beltTypes];
                                     updated[selectedCatIdx!].styles[selectedStyleIdx!].bom.splice(idx, 1);
                                     setLocalConfig({ ...localConfig, beltTypes: updated });
@@ -1028,7 +1024,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                         <div className="flex items-center gap-2 text-xs text-blue-800 font-medium">
                                           {isArea ? (
                                             <>
-                                              <div className="p-1 bg-blue-100 rounded text-blue-700">L Ã— W</div>
+                                              <div className="p-1 bg-blue-100 rounded text-blue-700">L Ãƒâ€” W</div>
                                               <span>Calculated by Area (Sq. Unit)</span>
                                             </>
                                           ) : (
@@ -1042,7 +1038,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
 
                                       <div className="space-y-1.5">
                                         <Label className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-1">
-                                          <span>Unit Rate (â‚¹)</span>
+                                          <span>Unit Rate (Ã¢â€šÂ¹)</span>
                                           <Info 
                                             className="h-3.5 w-3.5 text-zinc-400 hover:text-blue-600 hover:scale-110 transition-all cursor-pointer"
                                             onClick={() => openRateHistory(item.id, item.name)}
@@ -1235,7 +1231,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                                )}
                                              </Label>
                                              <div className="relative">
-                                               <div className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-bold">â‚¹</div>
+                                               <div className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-bold">Ã¢â€šÂ¹</div>
                                                <Input 
                                                  type="number"
                                                  className={cn(
@@ -1304,27 +1300,21 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                              variant="ghost" 
                                              size="icon" 
                                              className="h-8 w-8 text-zinc-300 hover:text-rose-500 hover:bg-rose-50 transition-colors shrink-0"
-                                             onClick={() => {
+                                              onClick={async () => {
                                                 if (window.confirm(`Are you sure you want to delete Sub-category "${opt.name}"?`)) {
-                                                  const securityCode = localConfig.constants.deletionCode;
-                                                  if (securityCode && securityCode.trim() !== '') {
-                                                    const entered = prompt(`Enter Deletion Security Code to delete Sub-category "${opt.name}":`);
-                                                    if (entered !== securityCode) {
-                                                      alert("Incorrect security code! Deletion cancelled.");
-                                                      return;
-                                                    }
-                                                  }
+                                                  const verified = await verifyDeletionCode(opt.name);
+                                                  if (!verified) return;
                                                   const updated = [...localConfig.beltTypes];
                                                   updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options.splice(optIdx, 1);
                                                   setLocalConfig({ ...localConfig, beltTypes: updated });
                                                 }
-                                             }}
+                                              }}
                                            >
                                              <Trash2 className="h-4 w-4" />
                                            </Button>
                                          </div>
 
-                                         {/* â”€â”€ FORMATION TOGGLE & BUILDER â”€â”€ */}
+                                         {/* Ã¢â€â‚¬Ã¢â€â‚¬ FORMATION TOGGLE & BUILDER Ã¢â€â‚¬Ã¢â€â‚¬ */}
                                          <div className="border-t border-zinc-100 pt-2.5 mt-0.5">
                                            <div className="flex items-center gap-2 mb-2">
                                              <button
@@ -1393,7 +1383,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                                        }}
                                                      />
                                                      <div className="relative w-[60px] shrink-0">
-                                                       <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400">â‚¹</span>
+                                                       <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400">Ã¢â€šÂ¹</span>
                                                        <Input
                                                          type="number"
                                                          placeholder="Rate"
@@ -1460,7 +1450,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                                    <div className="flex items-center justify-between pt-1.5 border-t border-violet-100">
                                                      <span className="text-[9px] text-violet-500 font-bold">Effective Combined Rate:</span>
                                                      <span className="text-[10px] font-black text-violet-700 font-mono">
-                                                       â‚¹{preview.toFixed(2)} <span className="text-[8px] font-normal">/ {opt.unit || item.unit}</span>
+                                                       Ã¢â€šÂ¹{preview.toFixed(2)} <span className="text-[8px] font-normal">/ {opt.unit || item.unit}</span>
                                                      </span>
                                                    </div>
                                                  );
@@ -1468,7 +1458,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                              </div>
                                            )}
                                          </div>
-                                         {/* â”€â”€ END FORMATION â”€â”€ */}
+                                         {/* Ã¢â€â‚¬Ã¢â€â‚¬ END FORMATION Ã¢â€â‚¬Ã¢â€â‚¬ */}
                                        </div>
                                      ))}
                                     {(!item.options || item.options.length === 0) && (
@@ -1602,7 +1592,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                           <span className="bg-blue-50 text-[10px] px-1.5 py-0.5 rounded font-mono font-bold text-blue-600 uppercase tracking-tighter">
                             ={item.formula}
                           </span>
-                             <span className="text-xs text-zinc-500 ml-auto font-mono">Rate: â‚¹{item.rate}/{item.unit}</span>
+                             <span className="text-xs text-zinc-500 ml-auto font-mono">Rate: Ã¢â€šÂ¹{item.rate}/{item.unit}</span>
                           </div>
                       </div>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-300 hover:text-red-500" onClick={() => removeBOMItem(i)}>
@@ -1624,7 +1614,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
       <Dialog open={categoryModal.isOpen} onOpenChange={(open) => !open && setCategoryModal({ ...categoryModal, isOpen: false })}>
         <DialogContent className="sm:max-w-[380px]">
           <DialogHeader>
-            <DialogTitle>{categoryModal.mode === 'add' ? 'âž• Add New Category' : 'âœï¸ Edit Category'}</DialogTitle>
+            <DialogTitle>{categoryModal.mode === 'add' ? 'Ã¢Å¾â€¢ Add New Category' : 'Ã¢Å“ÂÃ¯Â¸Â Edit Category'}</DialogTitle>
             <DialogDescription>
               Set the category name and its GST rate.
             </DialogDescription>
@@ -1705,9 +1695,9 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                   <div key={idx} className="flex items-start justify-between p-3 rounded-xl bg-zinc-50 border border-zinc-150 hover:border-zinc-200 transition-colors">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-zinc-400 text-xs font-bold line-through">â‚¹{entry.oldRate}</span>
-                        <span className="text-zinc-400 text-xs font-bold">â†’</span>
-                        <span className="text-emerald-600 text-sm font-black">â‚¹{entry.newRate}</span>
+                        <span className="text-zinc-400 text-xs font-bold line-through">Ã¢â€šÂ¹{entry.oldRate}</span>
+                        <span className="text-zinc-400 text-xs font-bold">Ã¢â€ â€™</span>
+                        <span className="text-emerald-600 text-sm font-black">Ã¢â€šÂ¹{entry.newRate}</span>
                       </div>
                       <p className="text-[10px] text-zinc-500 font-medium">Changed by: <span className="font-bold text-zinc-700">{entry.changedBy}</span></p>
                     </div>
