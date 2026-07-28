@@ -54,6 +54,7 @@ export interface BOMItem {
   formula: string;
   isLocked?: boolean;
   options?: {
+    id?: string;
     name: string;
     rate: number;
     unit?: string;
@@ -64,6 +65,7 @@ export interface BOMItem {
     formationItems?: FormationItem[];
   }[];
   linkedStockId?: string;
+  variables?: CustomVariable[];
 }
 
 export interface BeltStyle {
@@ -80,6 +82,13 @@ export interface BeltType {
   gst?: number;
 }
 
+export interface CustomVariable {
+  id: string;
+  name: string;
+  symbol: string;
+  mappedField: 'length' | 'width' | 'holeSize' | 'holeDistHorizontal' | 'holeDistVertical' | 'pricePerHole' | 'rate';
+}
+
 export interface Config {
   rates: Rates;
   constants: Constants;
@@ -89,6 +98,8 @@ export interface Config {
   units: { id: string; label: string; value: string }[];
   awsServerUrl?: string;
   beltCutProUrl?: string;
+  variables?: CustomVariable[];
+  currency?: string;
 }
 
 
@@ -103,7 +114,14 @@ export interface Client {
   name: string;
   company: string;
   city: string;
-  profitMargins: Record<string, ProfitRange[]>; // beltType -> ranges
+  /**
+   * Nested profit margins: beltType → styleName → ProfitRange[]
+   * e.g. { "PTFE": { "4x4 Fabric": [...], "2x2 Fabric": [...] } }
+   *
+   * Legacy flat format (beltType → ProfitRange[]) is handled gracefully via
+   * the `getStyleRanges` / `flattenMargins` helpers in the UI.
+   */
+  profitMargins: Record<string, Record<string, ProfitRange[]>>;
   mobile?: string;
 }
 
@@ -119,6 +137,8 @@ export interface QuotationItem {
     widthUnit?: string;
     hasHoles?: boolean;
     holeSize?: number;
+    holeLength?: number;
+    holeWidth?: number;
     holeDistHorizontal?: number;
     holeDistVertical?: number;
     pricePerHole?: number;
@@ -144,6 +164,8 @@ export interface Quotation {
     widthUnit?: string;
     hasHoles?: boolean;
     holeSize?: number;
+    holeLength?: number;
+    holeWidth?: number;
     holeDistHorizontal?: number;
     holeDistVertical?: number;
     pricePerHole?: number;
@@ -171,6 +193,7 @@ export interface Quotation {
 }
 
 export interface AuditLog {
+  id?: string;
   timestamp: any;
   userId: string;
   userName: string;
