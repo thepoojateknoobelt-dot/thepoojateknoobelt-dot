@@ -342,7 +342,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
     if (activeReportCard === 'purchase') {
       headers = ['Order ID', 'Date', 'Client', 'Material Subtotal'];
       rows = filteredOrders.map(o => [
-        `#${o.orderNumber || ''}`,
+        `#${(o as any).orderNumber || ''}`,
         convertToDate(o.updatedAt || o.createdAt).toLocaleDateString('en-IN'),
         o.clientName,
         Math.round(o.calculated?.summary?.subtotal || 0).toString()
@@ -351,7 +351,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
     } else if (activeReportCard === 'profitability') {
       headers = ['Order ID', 'Date', 'Client', 'Base Price', 'Profit Margin (Cash)', 'Profit Margin (%)'];
       rows = filteredOrders.map(o => [
-        `#${o.orderNumber || ''}`,
+        `#${(o as any).orderNumber || ''}`,
         convertToDate(o.updatedAt || o.createdAt).toLocaleDateString('en-IN'),
         o.clientName,
         Math.round(o.calculated?.summary?.totalWithProfit || 0).toString(),
@@ -362,7 +362,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
     } else if (activeReportCard === 'company') {
       headers = ['Order ID', 'Date', 'Client', 'Company', 'Final Selling Price'];
       rows = displayOrders.map(o => [
-        `#${o.orderNumber || ''}`,
+        `#${(o as any).orderNumber || ''}`,
         convertToDate(o.updatedAt || o.createdAt).toLocaleDateString('en-IN'),
         o.clientName,
         o.company || 'Pooja Tekno Belt',
@@ -470,7 +470,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       tableHeaders = '<th>Order ID</th><th>Date</th><th>Client</th><th style="text-align: right;">Material Subtotal</th>';
       tableRows = filteredOrders.map(o => `
         <tr>
-          <td>#${o.orderNumber || ''}</td>
+          <td>#${(o as any).orderNumber || ''}</td>
           <td>${convertToDate(o.updatedAt || o.createdAt).toLocaleDateString('en-IN')}</td>
           <td>${o.clientName}</td>
           <td style="text-align: right;">${formatCurrency(o.calculated?.summary?.subtotal || 0)}</td>
@@ -482,7 +482,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       tableHeaders = '<th>Order ID</th><th>Date</th><th>Client</th><th style="text-align: right;">Base Price</th><th style="text-align: right;">Profit Margin (₹)</th><th style="text-align: right;">Profit Margin (%)</th>';
       tableRows = filteredOrders.map(o => `
         <tr>
-          <td>#${o.orderNumber || ''}</td>
+          <td>#${(o as any).orderNumber || ''}</td>
           <td>${convertToDate(o.updatedAt || o.createdAt).toLocaleDateString('en-IN')}</td>
           <td>${o.clientName}</td>
           <td style="text-align: right;">${formatCurrency(o.calculated?.summary?.totalWithProfit || 0)}</td>
@@ -500,7 +500,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       tableHeaders = '<th>Order ID</th><th>Date</th><th>Client</th><th>Company</th><th style="text-align: right;">Final Selling Price</th>';
       tableRows = displayOrders.map(o => `
         <tr>
-          <td>#${o.orderNumber || ''}</td>
+          <td>#${(o as any).orderNumber || ''}</td>
           <td>${convertToDate(o.updatedAt || o.createdAt).toLocaleDateString('en-IN')}</td>
           <td>${o.clientName}</td>
           <td>${o.company || 'Pooja Tekno Belt'}</td>
