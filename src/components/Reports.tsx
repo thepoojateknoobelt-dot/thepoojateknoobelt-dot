@@ -324,9 +324,16 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
 
   // Export CSV Handler
   const handleExportCSV = () => {
-    if (filteredOrders.length === 0) {
-      toast.error('No orders to export in selected date range.');
-      return;
+    if (activeReportCard === 'inventory') {
+      if (inventoryEntries.length === 0) {
+        toast.error('No rolls to export.');
+        return;
+      }
+    } else {
+      if (filteredOrders.length === 0) {
+        toast.error('No orders to export in selected date range.');
+        return;
+      }
     }
 
     let headers: string[] = [];
@@ -363,16 +370,70 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       ]);
       const grandTotalFinal = displayOrders.reduce((sum, o) => sum + o.totalCost, 0);
       rows.push(['GRAND TOTAL', '', '', '', Math.round(grandTotalFinal).toString()]);
+    } else if (activeReportCard === 'inventory') {
+      headers = ['S.No', 'Product Name / Roll Details', 'Status', 'Active Rolls', 'Total Remaining (sqm)', 'Total Original (sqm)', 'Remaining %', 'Used %'];
+      rows = [];
+      
+      inventoryEntries.forEach(([product, data], index) => {
+        const remainingPct = data.totalSqm > 0 ? (data.totalRemaining / data.totalSqm) * 100 : 0;
+        const usedPct = 100 - remainingPct;
+        
+        // Product total row
+        rows.push([
+          (index + 1).toString(),
+          product,
+          'PRODUCT TOTAL',
+          data.rolls.length.toString(),
+          data.totalRemaining.toFixed(2),
+          data.totalSqm.toFixed(2),
+          `${remainingPct.toFixed(1)}%`,
+          `${usedPct.toFixed(1)}%`
+        ]);
+
+        // Roll breakdown rows
+        data.rolls.forEach((roll: any, idx: number) => {
+          const rRemainingPct = roll.totalSqm > 0 ? (roll.remainingSqm / roll.totalSqm) * 100 : 0;
+          const rUsedPct = 100 - rRemainingPct;
+          const dims = `${(roll.fullWidth * 1000).toFixed(0)}mm x ${(roll.fullLength * 1000).toFixed(0)}mm`;
+          rows.push([
+            '',
+            `  └ Roll #${idx + 1} (${roll.id ? roll.id.substring(0, 6) : ''}) [${dims}]`,
+            roll.isReuse ? 'Reuse' : 'Active',
+            '1',
+            (roll.remainingSqm || 0).toFixed(2),
+            (roll.totalSqm || 0).toFixed(2),
+            `${rRemainingPct.toFixed(1)}%`,
+            `${rUsedPct.toFixed(1)}%`
+          ]);
+        });
+      });
+
+      const grandTotalRemaining = inventoryValues.reduce((s, d) => s + d.totalRemaining, 0);
+      const grandTotalOriginal = inventoryValues.reduce((s, d) => s + d.totalSqm, 0);
+      const totalRollsCount = rolls.filter(r => !r.isArchived && r.status !== 'refused').length;
+      const grandRemainingPct = grandTotalOriginal > 0 ? (grandTotalRemaining / grandTotalOriginal) * 100 : 0;
+      
+      rows.push([
+        'GRAND TOTAL',
+        'All Active Inventory Products',
+        '-',
+        totalRollsCount.toString(),
+        grandTotalRemaining.toFixed(2),
+        grandTotalOriginal.toFixed(2),
+        `${grandRemainingPct.toFixed(1)}%`,
+        `${(100 - grandRemainingPct).toFixed(1)}%`
+      ]);
     }
 
     const csvContent = [headers, ...rows]
       .map(e => e.map(val => `"${val.replace(/"/g, '""')}"`).join(","))
       .join("\n");
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${activeReportCard}_report_${startDate}_to_${endDate}.csv`;
+    const fileNameCard = activeReportCard === 'inventory' ? 'roll_balance' : activeReportCard;
+    link.download = `${fileNameCard}_report_${startDate}_to_${endDate}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -381,9 +442,16 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
 
   // Print Report Handler
   const handlePrintReport = () => {
-    if (filteredOrders.length === 0) {
-      toast.error('No orders to print in selected date range.');
-      return;
+    if (activeReportCard === 'inventory') {
+      if (inventoryEntries.length === 0) {
+        toast.error('No rolls to print.');
+        return;
+      }
+    } else {
+      if (filteredOrders.length === 0) {
+        toast.error('No orders to print in selected date range.');
+        return;
+      }
     }
 
     const printWindow = window.open('', '_blank');
@@ -447,6 +515,49 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       } else {
         totalsHeader = `<h3>Total ${selectedCompany}: ${formatCurrency(displayOrders.reduce((sum, o) => sum + o.totalCost, 0))}</h3>`;
       }
+    } else if (activeReportCard === 'inventory') {
+      reportTitle = 'Roll Balance Report';
+      const grandTotalRemaining = inventoryValues.reduce((s, d) => s + d.totalRemaining, 0);
+      const grandTotalOriginal = inventoryValues.reduce((s, d) => s + d.totalSqm, 0);
+      const totalRollsCount = rolls.filter(r => !r.isArchived && r.status !== 'refused').length;
+
+      totalsHeader = `
+        <h3>Total Active Rolls: ${totalRollsCount}</h3>
+        <h3>Total Remaining Inventory: ${grandTotalRemaining.toFixed(2)} sqm / ${grandTotalOriginal.toFixed(2)} sqm</h3>
+      `;
+
+      tableHeaders = '<th>S.No</th><th>Product Name / Details</th><th style="text-align: center;">Status</th><th style="text-align: center;">Active Rolls</th><th style="text-align: right;">Total Remaining (sqm)</th><th style="text-align: right;">Total Original (sqm)</th><th style="text-align: center;">Remaining %</th>';
+
+      tableRows = inventoryEntries.map(([product, data], index) => {
+        const remainingPct = data.totalSqm > 0 ? (data.totalRemaining / data.totalSqm) * 100 : 0;
+        const rollRows = data.rolls.map((roll: any, idx: number) => {
+          const rRemainingPct = roll.totalSqm > 0 ? (roll.remainingSqm / roll.totalSqm) * 100 : 0;
+          return `
+            <tr style="background-color: #fcfcfc; font-size: 10px; color: #52525b;">
+              <td></td>
+              <td style="padding-left: 20px;">└ Roll #${idx + 1} (${roll.id ? roll.id.substring(0, 6) : ''}) [${(roll.fullWidth * 1000).toFixed(0)}mm × ${(roll.fullLength * 1000).toFixed(0)}mm]</td>
+              <td style="text-align: center;">${roll.isReuse ? 'Reuse' : 'Active'}</td>
+              <td style="text-align: center;">1</td>
+              <td style="text-align: right;">${(roll.remainingSqm || 0).toFixed(2)}</td>
+              <td style="text-align: right;">${(roll.totalSqm || 0).toFixed(2)}</td>
+              <td style="text-align: center;">${rRemainingPct.toFixed(1)}%</td>
+            </tr>
+          `;
+        }).join('');
+
+        return `
+          <tr style="font-weight: bold; background-color: #f4f4f5;">
+            <td>${index + 1}</td>
+            <td>${product}</td>
+            <td style="text-align: center;">PRODUCT TOTAL</td>
+            <td style="text-align: center;">${data.rolls.length}</td>
+            <td style="text-align: right;">${data.totalRemaining.toFixed(2)}</td>
+            <td style="text-align: right;">${data.totalSqm.toFixed(2)}</td>
+            <td style="text-align: center;">${remainingPct.toFixed(1)}%</td>
+          </tr>
+          ${rollRows}
+        `;
+      }).join('');
     }
 
     printWindow.document.write(`

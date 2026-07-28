@@ -7869,7 +7869,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                 </div>
 
                 {/* Right Column: Stats & Cuts Allocations Sidebar (fixed width on desktop) */}
-                <div className={`w-full lg:w-96 border-t lg:border-t-0 lg:border-l border-zinc-150 bg-white flex flex-col transition-all duration-300 ease-in-out ${isLayoutFrozen ? 'overflow-hidden h-full lg:h-[calc(92vh-88px)] lg:sticky lg:top-0' : 'overflow-visible h-auto'
+                <div className={`w-full lg:w-96 lg:shrink-0 border-t lg:border-t-0 lg:border-l border-zinc-150 bg-white flex flex-col transition-all duration-300 ease-in-out ${isLayoutFrozen ? 'overflow-hidden h-full lg:h-[calc(92vh-88px)] lg:sticky lg:top-0' : 'overflow-visible h-auto'
                   }`}>
 
                   {/* Scrollable Sidebar Content */}

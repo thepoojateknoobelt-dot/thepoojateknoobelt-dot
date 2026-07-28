@@ -59,6 +59,7 @@ interface ClientModalProps {
 }
 
 const ClientModal: React.FC<ClientModalProps> = ({ client, config, onClose, onSaved }) => {
+  const { user } = useAuth();
   const [tab, setTab] = useState<'overview' | 'history' | 'margins' | 'edit'>('overview');
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [loadingQ, setLoadingQ] = useState(false);
@@ -141,6 +142,10 @@ const ClientModal: React.FC<ClientModalProps> = ({ client, config, onClose, onSa
     { id: 'margins',  label: 'Margins',  icon: TrendingUp },
   ] as const;
 
+  const activeTabs = useMemo(() => {
+    return tabs.filter(t => t.id !== 'margins' || user?.role === 'admin');
+  }, [user?.role]);
+
   return (
     <Dialog open={!!client} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-4xl sm:max-w-4xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
@@ -209,7 +214,7 @@ const ClientModal: React.FC<ClientModalProps> = ({ client, config, onClose, onSa
 
         {/* ── Tabs ── */}
         <div className="shrink-0 flex gap-1 px-6 pt-3 bg-white border-b border-zinc-100">
-          {tabs.map(t => (
+          {activeTabs.map(t => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
@@ -259,27 +264,29 @@ const ClientModal: React.FC<ClientModalProps> = ({ client, config, onClose, onSa
 
 
               {/* Profit Margins Summary */}
-              <div className="bg-zinc-50 rounded-xl border border-zinc-100 p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4 text-zinc-500" />
-                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-600">Profit Margins by Category</h3>
+              {user?.role === 'admin' && (
+                <div className="bg-zinc-50 rounded-xl border border-zinc-100 p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="h-4 w-4 text-zinc-500" />
+                    <h3 className="text-xs font-black uppercase tracking-wider text-zinc-600">Profit Margins by Category</h3>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {(Array.isArray(config?.beltTypes) ? config.beltTypes : []).map(type => {
+                      const ranges = client.profitMargins?.[type.name] || [];
+                      const firstMargin = ranges[0]?.margin;
+                      return (
+                        <div key={type.id} className="bg-white rounded-lg border border-zinc-200 px-3 py-2 flex items-center gap-2">
+                          <span className="text-xs font-bold text-zinc-700">{type.name}</span>
+                          <span className="text-xs font-black text-emerald-700">{firstMargin ?? '—'}%</span>
+                          {ranges.length > 1 && (
+                            <span className="text-[9px] text-zinc-400">+{ranges.length - 1} ranges</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {(Array.isArray(config?.beltTypes) ? config.beltTypes : []).map(type => {
-                    const ranges = client.profitMargins?.[type.name] || [];
-                    const firstMargin = ranges[0]?.margin;
-                    return (
-                      <div key={type.id} className="bg-white rounded-lg border border-zinc-200 px-3 py-2 flex items-center gap-2">
-                        <span className="text-xs font-bold text-zinc-700">{type.name}</span>
-                        <span className="text-xs font-black text-emerald-700">{firstMargin ?? '—'}%</span>
-                        {ranges.length > 1 && (
-                          <span className="text-[9px] text-zinc-400">+{ranges.length - 1} ranges</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+              )}
 
               {/* Recent Activity */}
               <div className="bg-zinc-50 rounded-xl border border-zinc-100 p-4 space-y-3">
@@ -439,103 +446,105 @@ const ClientModal: React.FC<ClientModalProps> = ({ client, config, onClose, onSa
               </div>
 
               {/* Profit Margins */}
-              <div className="bg-zinc-50 rounded-xl border border-zinc-150 p-5 space-y-4">
-                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-600">Profit Margins by Category</h3>
-                <div className="space-y-5">
-                  {(Array.isArray(config?.beltTypes) ? config.beltTypes : []).map(type => (
-                    <div key={type.id} className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-zinc-700 uppercase tracking-wider">{type.name}</span>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-6 text-[10px] text-blue-600 hover:text-blue-800"
-                          onClick={() => {
-                            const current = Array.isArray(editMargins[type.name]) ? editMargins[type.name] : [];
-                            const lastMax = current.length > 0 ? current[current.length - 1].maxLength : 0;
-                            setEditMargins({ ...editMargins, [type.name]: [...current, { minLength: lastMax || 0, maxLength: null, margin: 20 }] });
-                          }}
-                        >
-                          + Add Range
-                        </Button>
+              {user?.role === 'admin' && (
+                <div className="bg-zinc-50 rounded-xl border border-zinc-150 p-5 space-y-4">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-600">Profit Margins by Category</h3>
+                  <div className="space-y-5">
+                    {(Array.isArray(config?.beltTypes) ? config.beltTypes : []).map(type => (
+                      <div key={type.id} className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-zinc-700 uppercase tracking-wider">{type.name}</span>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 text-[10px] text-blue-600 hover:text-blue-800"
+                            onClick={() => {
+                              const current = Array.isArray(editMargins[type.name]) ? editMargins[type.name] : [];
+                              const lastMax = current.length > 0 ? current[current.length - 1].maxLength : 0;
+                              setEditMargins({ ...editMargins, [type.name]: [...current, { minLength: lastMax || 0, maxLength: null, margin: 20 }] });
+                            }}
+                          >
+                            + Add Range
+                          </Button>
+                        </div>
+                        <div className="space-y-2.5">
+                          {(Array.isArray(editMargins[type.name]) ? editMargins[type.name] : []).map((range, idx) => (
+                            <div key={idx} className="flex flex-wrap items-center gap-3 bg-white rounded-xl border border-zinc-200 p-3 shadow-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-zinc-550">From</span>
+                                <div className="relative">
+                                  <Input
+                                    type="number"
+                                    className="h-8 text-xs w-20 pr-6 font-semibold text-zinc-800 border-zinc-300"
+                                    value={range.minLength}
+                                    onChange={e => {
+                                      const r = [...editMargins[type.name]];
+                                      r[idx] = { ...r[idx], minLength: parseFloat(e.target.value) || 0 };
+                                      setEditMargins({ ...editMargins, [type.name]: r });
+                                    }}
+                                  />
+                                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400 font-bold">m</span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-zinc-550">To</span>
+                                <div className="relative">
+                                  <Input
+                                    type="number"
+                                    className="h-8 text-xs w-20 pr-6 font-semibold text-zinc-800 border-zinc-300"
+                                    value={range.maxLength || ''}
+                                    placeholder="∞"
+                                    onChange={e => {
+                                      const r = [...editMargins[type.name]];
+                                      r[idx] = { ...r[idx], maxLength: e.target.value ? parseFloat(e.target.value) : null };
+                                      setEditMargins({ ...editMargins, [type.name]: r });
+                                    }}
+                                  />
+                                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400 font-bold">m</span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 ml-0 sm:ml-auto">
+                                <span className="text-xs font-bold text-zinc-550">Margin</span>
+                                <div className="relative">
+                                  <Input
+                                    type="number"
+                                    className="h-8 text-xs w-18 pr-6 font-black text-emerald-700 border-zinc-300"
+                                    value={range.margin}
+                                    onChange={e => {
+                                      const r = [...editMargins[type.name]];
+                                      r[idx] = { ...r[idx], margin: parseFloat(e.target.value) || 0 };
+                                      setEditMargins({ ...editMargins, [type.name]: r });
+                                    }}
+                                  />
+                                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-emerald-600 font-extrabold">%</span>
+                                </div>
+                              </div>
+
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8 text-zinc-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors shrink-0"
+                                onClick={() => {
+                                  const r = [...editMargins[type.name]];
+                                  r.splice(idx, 1);
+                                  setEditMargins({ ...editMargins, [type.name]: r });
+                                }}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))}
+                          {(!editMargins[type.name] || editMargins[type.name].length === 0) && (
+                            <p className="text-[10px] text-zinc-400 italic px-1">No ranges. Click "+ Add Range" to add one.</p>
+                          )}
+                        </div>
                       </div>
-                      <div className="space-y-2.5">
-                        {(Array.isArray(editMargins[type.name]) ? editMargins[type.name] : []).map((range, idx) => (
-                          <div key={idx} className="flex flex-wrap items-center gap-3 bg-white rounded-xl border border-zinc-200 p-3 shadow-xs">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-bold text-zinc-550">From</span>
-                              <div className="relative">
-                                <Input
-                                  type="number"
-                                  className="h-8 text-xs w-20 pr-6 font-semibold text-zinc-800 border-zinc-300"
-                                  value={range.minLength}
-                                  onChange={e => {
-                                    const r = [...editMargins[type.name]];
-                                    r[idx] = { ...r[idx], minLength: parseFloat(e.target.value) || 0 };
-                                    setEditMargins({ ...editMargins, [type.name]: r });
-                                  }}
-                                />
-                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400 font-bold">m</span>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-bold text-zinc-550">To</span>
-                              <div className="relative">
-                                <Input
-                                  type="number"
-                                  className="h-8 text-xs w-20 pr-6 font-semibold text-zinc-800 border-zinc-300"
-                                  value={range.maxLength || ''}
-                                  placeholder="∞"
-                                  onChange={e => {
-                                    const r = [...editMargins[type.name]];
-                                    r[idx] = { ...r[idx], maxLength: e.target.value ? parseFloat(e.target.value) : null };
-                                    setEditMargins({ ...editMargins, [type.name]: r });
-                                  }}
-                                />
-                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400 font-bold">m</span>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 ml-0 sm:ml-auto">
-                              <span className="text-xs font-bold text-zinc-550">Margin</span>
-                              <div className="relative">
-                                <Input
-                                  type="number"
-                                  className="h-8 text-xs w-18 pr-6 font-black text-emerald-700 border-zinc-300"
-                                  value={range.margin}
-                                  onChange={e => {
-                                    const r = [...editMargins[type.name]];
-                                    r[idx] = { ...r[idx], margin: parseFloat(e.target.value) || 0 };
-                                    setEditMargins({ ...editMargins, [type.name]: r });
-                                  }}
-                                />
-                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-emerald-600 font-extrabold">%</span>
-                              </div>
-                            </div>
-
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-8 w-8 text-zinc-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors shrink-0"
-                              onClick={() => {
-                                const r = [...editMargins[type.name]];
-                                r.splice(idx, 1);
-                                setEditMargins({ ...editMargins, [type.name]: r });
-                              }}
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        ))}
-                        {(!editMargins[type.name] || editMargins[type.name].length === 0) && (
-                          <p className="text-[10px] text-zinc-400 italic px-1">No ranges. Click "+ Add Range" to add one.</p>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Save Button */}
               <div className="flex gap-3 justify-end pt-2 border-t border-zinc-150">
@@ -822,7 +831,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                       )}
                     </th>
                     <th scope="col" className="px-4 py-3">Mobile</th>
-                    <th scope="col" className="px-4 py-3">Profit Margins</th>
+                    {user?.role === 'admin' && <th scope="col" className="px-4 py-3">Profit Margins</th>}
                     <th scope="col" className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -844,18 +853,20 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                       <td className="px-4 py-3.5 text-zinc-500 font-semibold">{c.company}</td>
                       <td className="px-4 py-3.5 text-zinc-600 font-semibold">{c.city}</td>
                       <td className="px-4 py-3.5 text-zinc-500 font-mono whitespace-nowrap">{c.mobile || '-'}</td>
-                      <td className="px-4 py-3.5">
-                        <div className="flex flex-wrap gap-1">
-                          {(Array.isArray(config?.beltTypes) ? config.beltTypes : []).slice(0, 3).map(type => {
-                            const m = c.profitMargins?.[type.name]?.[0]?.margin;
-                            return m !== undefined ? (
-                              <span key={type.id} className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded px-1.5 py-0.5">
-                                {type.name} {m}%
-                              </span>
-                            ) : null;
-                          })}
-                        </div>
-                      </td>
+                      {user?.role === 'admin' && (
+                        <td className="px-4 py-3.5">
+                          <div className="flex flex-wrap gap-1">
+                            {(Array.isArray(config?.beltTypes) ? config.beltTypes : []).slice(0, 3).map(type => {
+                              const m = c.profitMargins?.[type.name]?.[0]?.margin;
+                              return m !== undefined ? (
+                                <span key={type.id} className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded px-1.5 py-0.5">
+                                  {type.name} {m}%
+                                </span>
+                              ) : null;
+                            })}
+                          </div>
+                        </td>
+                      )}
                       <td className="px-4 py-3.5 text-right" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1.5">
                           <Button
