@@ -165,6 +165,9 @@ export interface Quotation {
   beltStyle?: string;
   selectedBOMOptions?: Record<string, number>;
   items?: QuotationItem[];
+  orderNumber?: string | number;
+  calculated?: any;
+  createdByName?: string;
 }
 
 export interface AuditLog {
