@@ -146,6 +146,16 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
   const [materialStocks, setMaterialStocks] = useState<MaterialStock[]>([]);
   const [newMaterialStock, setNewMaterialStock] = useState({ name: '', quantity: '', unit: 'pcs', reorderLevel: '' });
   const [config, setConfig] = useState<any>(null);
+  const [formLots, setFormLots] = useState<any[]>([]);
+  const [expandedStockIds, setExpandedStockIds] = useState<string[]>([]);
+
+  // Synchronize lots count with quantity in "Add Material" form
+  useEffect(() => {
+    if (formLots.length > 0) {
+      const totalPieces = formLots.reduce((sum, lot) => sum + (lot.pieces?.length || 0), 0);
+      setNewMaterialStock(prev => ({ ...prev, quantity: totalPieces.toString() }));
+    }
+  }, [formLots]);
 
   const loadConfigData = async () => {
     try {
@@ -159,6 +169,25 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
     }
   };
   const [editingMaterialStock, setEditingMaterialStock] = useState<MaterialStock | null>(null);
+
+  // Synchronize lots count with quantity in "Edit Material" inline form
+  useEffect(() => {
+    if (editingMaterialStock) {
+      setFormLots(editingMaterialStock.lots || []);
+    } else {
+      setFormLots([]);
+    }
+  }, [editingMaterialStock?.id]);
+
+  useEffect(() => {
+    if (editingMaterialStock && formLots.length > 0) {
+      const totalPieces = formLots.reduce((sum, lot) => sum + (lot.pieces?.length || 0), 0);
+      if (editingMaterialStock.quantity !== totalPieces) {
+        setEditingMaterialStock(prev => prev ? { ...prev, quantity: totalPieces } : null);
+      }
+    }
+  }, [formLots]);
+
   const [showAddMaterialForm, setShowAddMaterialForm] = useState(false);
   const [activeInventoryCard, setActiveInventoryCard] = useState<'materials' | 'remnants' | 'fresh' | 'reorder' | 'requests' | null>(null);
   const [editingReorderLevel, setEditingReorderLevel] = useState<Record<string, string>>({}); // stockId -> input value
@@ -358,12 +387,14 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
         body: JSON.stringify({
           name: newMaterialStock.name.trim(),
           quantity: parseFloat(newMaterialStock.quantity) || 0,
-          unit: newMaterialStock.unit.trim() || 'pcs'
+          unit: newMaterialStock.unit.trim() || 'pcs',
+          lots: formLots
         })
       });
       if (res.ok) {
         toast.success("Material stock added successfully!");
         setNewMaterialStock({ name: '', quantity: '', unit: 'pcs', reorderLevel: '' });
+        setFormLots([]);
         setShowAddMaterialForm(false);
         loadMaterialStocksData();
       } else {
@@ -384,12 +415,14 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
         body: JSON.stringify({
           name: editingMaterialStock.name.trim(),
           quantity: editingMaterialStock.quantity,
-          unit: editingMaterialStock.unit
+          unit: editingMaterialStock.unit,
+          lots: formLots
         })
       });
       if (res.ok) {
         toast.success("Material stock updated successfully!");
         setEditingMaterialStock(null);
+        setFormLots([]);
         loadMaterialStocksData();
       } else {
         const errData = await res.json().catch(() => ({}));
@@ -1078,8 +1111,8 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
       return 0;
     });
 
-    // Show at most 4 rolls in the visualization accordion
-    return list.slice(0, 4);
+    // Show at most 10 rolls in the visualization accordion
+    return list.slice(0, 10);
   }, [rolls, selectedOrder.materialType, optimizationResults, lastCutRollId, cutPurpose, cuttingSelectedRollId]);
 
   // Set the first visible roll as expanded by default or keep the current one expanded if still visible
@@ -1928,7 +1961,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
       });
     } catch (err) {
       console.error("Error adding roll:", err);
-      alert("Failed to add roll. Please try again.");
+      alert(err instanceof Error ? err.message : "Failed to add roll. Please try again.");
     } finally {
       setIsSyncing(false);
     }
@@ -4379,13 +4412,16 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                             </div>
                           </div>
                           <div className="space-y-1">
-                            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Quantity</label>
+                            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                              Quantity {formLots.length > 0 && <span className="text-emerald-600 font-bold">(Auto-calculated)</span>}
+                            </label>
                             <input
                               type="number"
                               placeholder="0"
                               value={newMaterialStock.quantity}
+                              disabled={formLots.length > 0}
                               onChange={(e) => setNewMaterialStock({ ...newMaterialStock, quantity: e.target.value })}
-                              className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-zinc-950"
+                              className={`w-full px-3 py-2 border border-zinc-200 rounded-lg text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-zinc-950 ${formLots.length > 0 ? 'opacity-70 bg-zinc-50 border-zinc-300 cursor-not-allowed' : ''}`}
                             />
                           </div>
                           <div className="space-y-1">
@@ -4399,6 +4435,118 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                             />
                           </div>
                         </div>
+
+                        {/* Lots & Weights Section */}
+                        <div className="border-t border-slate-200/60 pt-4 mt-2">
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-1">
+                              <Layers size={14} className="text-zinc-600" /> Lots & Piece Weights (Optional)
+                            </h4>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFormLots([...formLots, { lotNumber: `Lot ${formLots.length + 1}`, pieces: [] }]);
+                              }}
+                              className="px-2.5 py-1 bg-zinc-950 text-white hover:bg-zinc-800 rounded text-[9px] font-black uppercase flex items-center gap-1 cursor-pointer transition active:scale-95 shadow-sm"
+                            >
+                              <Plus size={11} /> Add Lot
+                            </button>
+                          </div>
+
+                          {formLots.length === 0 ? (
+                            <p className="text-[10px] text-slate-400 italic">No lots added. Quantity will be entered manually.</p>
+                          ) : (
+                            <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                              {formLots.map((lot, lIdx) => (
+                                <div key={lIdx} className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+                                  <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Lot No</span>
+                                      <input
+                                        type="text"
+                                        value={lot.lotNumber}
+                                        onChange={(e) => {
+                                          const updated = [...formLots];
+                                          updated[lIdx].lotNumber = e.target.value;
+                                          setFormLots(updated);
+                                        }}
+                                        className="px-2 py-0.5 border border-slate-200 rounded font-bold text-xs bg-slate-50 w-36"
+                                      />
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updated = [...formLots];
+                                          const nextNo = lot.pieces.length + 1;
+                                          updated[lIdx].pieces.push({ pieceNo: nextNo, weight: 0 });
+                                          setFormLots(updated);
+                                        }}
+                                        className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-[9.5px] font-black uppercase cursor-pointer transition active:scale-95"
+                                      >
+                                        + Add Piece
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updated = formLots.filter((_, i) => i !== lIdx);
+                                          setFormLots(updated);
+                                        }}
+                                        className="p-1 hover:bg-red-50 text-red-500 rounded cursor-pointer transition"
+                                        title="Delete Lot"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {lot.pieces.length === 0 ? (
+                                    <p className="text-[10px] text-slate-400 italic pl-1">No pieces in this lot yet.</p>
+                                  ) : (
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-1">
+                                      {lot.pieces.map((piece: any, pIdx: number) => (
+                                        <div key={pIdx} className="flex items-center border border-slate-100 rounded-xl p-2 bg-slate-50/50 justify-between gap-1">
+                                          <div className="flex flex-col">
+                                            <span className="text-[7.5px] font-black text-slate-400 uppercase">Piece #{piece.pieceNo}</span>
+                                            <div className="flex items-center gap-1 mt-0.5">
+                                              <input
+                                                type="number"
+                                                step="0.001"
+                                                placeholder="Weight"
+                                                value={piece.weight || ''}
+                                                onChange={(e) => {
+                                                  const updated = [...formLots];
+                                                  updated[lIdx].pieces[pIdx].weight = parseFloat(e.target.value) || 0;
+                                                  setFormLots(updated);
+                                                }}
+                                                className="w-16 px-1.5 py-0.5 border border-slate-200 rounded font-mono font-bold text-[10px] text-center bg-white"
+                                              />
+                                              <span className="text-[8px] font-bold text-slate-400 font-mono">kg</span>
+                                            </div>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const updated = [...formLots];
+                                              updated[lIdx].pieces = lot.pieces.filter((_: any, i: number) => i !== pIdx);
+                                              updated[lIdx].pieces.forEach((p: any, idx: number) => { p.pieceNo = idx + 1; });
+                                              setFormLots(updated);
+                                            }}
+                                            className="p-1 hover:bg-red-50 text-red-400 hover:text-red-600 rounded cursor-pointer transition"
+                                            title="Remove Piece"
+                                          >
+                                            <X size={12} />
+                                          </button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
                         <button
                           onClick={handleAddMaterialStock}
                           className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black text-xs uppercase tracking-wider transition cursor-pointer"
@@ -4434,8 +4582,10 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                         <tbody className="divide-y divide-zinc-150">
                           {filteredMaterialStocksList.map((item) => {
                             const isEditing = editingMaterialStock?.id === item.id;
+                            const isExpanded = expandedStockIds.includes(item.id) || isEditing;
                             return (
-                              <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                              <React.Fragment key={item.id}>
+                              <tr className="hover:bg-slate-50/50 transition-colors">
                                 {isEditing ? (
                                   <>
                                     <td className="px-4 py-3">
@@ -4451,8 +4601,9 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                         <input
                                           type="number"
                                           value={editingMaterialStock.quantity}
+                                          disabled={formLots.length > 0}
                                           onChange={(e) => setEditingMaterialStock({ ...editingMaterialStock, quantity: parseFloat(e.target.value) || 0 })}
-                                          className="w-24 px-3 py-2 border border-zinc-300 rounded-lg text-xs font-bold text-center bg-white"
+                                          className={`w-24 px-3 py-2 border border-zinc-300 rounded-lg text-xs font-bold text-center bg-white ${formLots.length > 0 ? 'opacity-70 bg-zinc-50 border-zinc-200 cursor-not-allowed' : ''}`}
                                         />
                                         <input
                                           type="text"
@@ -4483,7 +4634,33 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                   </>
                                 ) : (
                                   <>
-                                    <td className="px-4 py-3 font-black text-sm text-slate-800">{item.name}</td>
+                                    <td className="px-4 py-3 font-black text-sm text-slate-800">
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          onClick={() => {
+                                            const exp = expandedStockIds.includes(item.id);
+                                            if (exp) {
+                                              setExpandedStockIds(expandedStockIds.filter(id => id !== item.id));
+                                            } else {
+                                              setExpandedStockIds([...expandedStockIds, item.id]);
+                                            }
+                                          }}
+                                          className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-800 transition cursor-pointer"
+                                          title={expandedStockIds.includes(item.id) ? 'Collapse Details' : 'Expand Details'}
+                                        >
+                                          <ChevronRight
+                                            size={15}
+                                            className={`transition-transform duration-200 ${expandedStockIds.includes(item.id) ? 'rotate-90' : ''}`}
+                                          />
+                                        </button>
+                                        <span>{item.name}</span>
+                                        {item.lots && item.lots.length > 0 && (
+                                          <span className="text-[8px] font-black text-indigo-600 bg-indigo-50 border border-indigo-150 px-1.5 py-0.5 rounded-md uppercase tracking-wider">
+                                            {item.lots.length} Lots
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
                                     <td className="px-4 py-3">
                                       <span className="text-[11px] font-black text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-lg">
                                         {item.quantity} {item.unit}
@@ -6698,7 +6875,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                 </div>
 
                 {/* Right Column: Stats & Cuts Allocations Sidebar (fixed width on desktop) */}
-                <div className={`w-full lg:w-96 border-t lg:border-t-0 lg:border-l border-zinc-150 bg-white flex flex-col transition-all duration-300 ease-in-out ${
+                <div className={`w-full lg:w-96 lg:shrink-0 border-t lg:border-t-0 lg:border-l border-zinc-150 bg-white flex flex-col transition-all duration-300 ease-in-out ${
                   isLayoutFrozen ? 'overflow-hidden h-full lg:h-[calc(92vh-88px)] lg:sticky lg:top-0' : 'overflow-visible h-auto'
                 }`}>
                   

@@ -8,6 +8,7 @@ export interface User {
   password?: string;
   permission?: 'read' | 'write';
   allowedPages?: string[];
+  hasDeletionCode?: boolean;
 }
 
 export interface Rates {
@@ -24,6 +25,7 @@ export interface Constants {
   fixCost: number;
   defaultProfit: number;
   saleGst: number;
+  deletionCode?: string;
 }
 
 export interface JointType {
@@ -37,6 +39,13 @@ export interface TapeType {
   rate: number;
 }
 
+export interface FormationItem {
+  name: string;
+  rate: number;
+  formula: string;
+  unit: string;
+}
+
 export interface BOMItem {
   id: string;
   name: string;
@@ -44,8 +53,19 @@ export interface BOMItem {
   unit: string;
   formula: string;
   isLocked?: boolean;
-  options?: { name: string, rate: number, unit?: string; linkedStockId?: string; formula?: string }[];
+  options?: {
+    id?: string;
+    name: string;
+    rate: number;
+    unit?: string;
+    linkedStockId?: string;
+    formula?: string;
+    // Formation fields
+    isFormation?: boolean;
+    formationItems?: FormationItem[];
+  }[];
   linkedStockId?: string;
+  variables?: CustomVariable[];
 }
 
 export interface BeltStyle {
@@ -59,6 +79,14 @@ export interface BeltType {
   name: string;
   styles: BeltStyle[];
   fixCost?: number;
+  gst?: number;
+}
+
+export interface CustomVariable {
+  id: string;
+  name: string;
+  symbol: string;
+  mappedField: 'length' | 'width' | 'holeSize' | 'holeDistHorizontal' | 'holeDistVertical' | 'pricePerHole' | 'rate';
 }
 
 export interface Config {
@@ -70,6 +98,8 @@ export interface Config {
   units: { id: string; label: string; value: string }[];
   awsServerUrl?: string;
   beltCutProUrl?: string;
+  variables?: CustomVariable[];
+  currency?: string;
 }
 
 
@@ -84,7 +114,14 @@ export interface Client {
   name: string;
   company: string;
   city: string;
-  profitMargins: Record<string, ProfitRange[]>; // beltType -> ranges
+  /**
+   * Nested profit margins: beltType → styleName → ProfitRange[]
+   * e.g. { "PTFE": { "4x4 Fabric": [...], "2x2 Fabric": [...] } }
+   *
+   * Legacy flat format (beltType → ProfitRange[]) is handled gracefully via
+   * the `getStyleRanges` / `flattenMargins` helpers in the UI.
+   */
+  profitMargins: Record<string, Record<string, ProfitRange[]>>;
   mobile?: string;
 }
 
@@ -100,6 +137,8 @@ export interface QuotationItem {
     widthUnit?: string;
     hasHoles?: boolean;
     holeSize?: number;
+    holeLength?: number;
+    holeWidth?: number;
     holeDistHorizontal?: number;
     holeDistVertical?: number;
     pricePerHole?: number;
@@ -125,6 +164,8 @@ export interface Quotation {
     widthUnit?: string;
     hasHoles?: boolean;
     holeSize?: number;
+    holeLength?: number;
+    holeWidth?: number;
     holeDistHorizontal?: number;
     holeDistVertical?: number;
     pricePerHole?: number;
@@ -136,6 +177,7 @@ export interface Quotation {
   status: 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'order' | 'executed';
   discountRequested?: number;
   discountReason?: string;
+  salesMarkup?: number;
   rejectionReason?: string;
   createdBy: string;
   createdAt: any;
@@ -145,9 +187,13 @@ export interface Quotation {
   beltStyle?: string;
   selectedBOMOptions?: Record<string, number>;
   items?: QuotationItem[];
+  orderNumber?: string | number;
+  calculated?: any;
+  createdByName?: string;
 }
 
 export interface AuditLog {
+  id?: string;
   timestamp: any;
   userId: string;
   userName: string;
@@ -160,9 +206,21 @@ export interface Company {
   name: string;
 }
 
+export interface MaterialPiece {
+  pieceNo: number;
+  weight: number;
+}
+
+export interface MaterialLot {
+  lotNumber: string;
+  pieces: MaterialPiece[];
+}
+
 export interface MaterialStock {
   id: string;
   name: string;
   quantity: number;
   unit: string;
+  reorderLevel?: number;
+  lots?: MaterialLot[];
 }

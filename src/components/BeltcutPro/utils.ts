@@ -1,6 +1,7 @@
 /**
  * Helper utility functions for BeltcutPro
  */
+import { Roll, Cut } from './types';
 
 /**
  * Extract a shortened parent roll ID from a long ID string.
@@ -87,4 +88,84 @@ export const getShortRollId = (id: string): string => {
   }
   
   return id;
+};
+
+// Helper to calculate absolute offset of a child roll relative to a root roll
+export const calculateAbsoluteOffset = (r: Roll, rootRollId: string, allRolls: Roll[]): { x: number; y: number; isValid: boolean } => {
+  let currentRoll = r;
+  let x = 0;
+  let y = 0;
+  
+  while (currentRoll && currentRoll.id !== rootRollId) {
+    if (!currentRoll.parentRollId) {
+      return { x: 0, y: 0, isValid: false };
+    }
+    
+    const parent = allRolls.find(pr => pr.id === currentRoll.parentRollId);
+    if (!parent) {
+      return { x: 0, y: 0, isValid: false };
+    }
+    
+    // 1. Try to find a cut on the parent roll that matches this child roll
+    const parentCut = parent.cuts?.find(c => 
+      currentRoll.id === `REUSE-${parent.id}-${c.id}` || 
+      currentRoll.id === `INV-${parent.id}-${c.id}` || 
+      currentRoll.id.endsWith(c.id)
+    );
+    
+    if (parentCut) {
+      x += parentCut.x;
+      y += parentCut.y;
+    } else {
+      // 2. Check if it's a leftover roll from a reuse roll
+      if (parent.isReuse || parent.id.startsWith('REUSE-') || parent.id.startsWith('INV-') || parent.id.startsWith('SCRAP-')) {
+        x += (parent.fullLength - currentRoll.fullLength);
+      } else {
+        // Fallback: try to find by dimensions on a fresh parent roll
+        const matchingCut = parent.cuts?.find(c => 
+          c.isInventoryCut && 
+          Math.abs(c.width - currentRoll.fullWidth) < 0.02 && 
+          Math.abs(c.length - currentRoll.fullLength) < 0.02
+        );
+        if (matchingCut) {
+          x += matchingCut.x;
+          y += matchingCut.y;
+        } else {
+          return { x: 0, y: 0, isValid: false };
+        }
+      }
+    }
+    
+    currentRoll = parent;
+  }
+  
+  return { x, y, isValid: true };
+};
+
+// Helper to get all resolved cuts for a roll, including descendant cuts
+export const getResolvedRollCuts = (roll: Roll, allRolls: Roll[]): Cut[] => {
+  if (!allRolls || allRolls.length === 0) return roll.cuts || [];
+
+  const list = [...(roll.cuts || [])];
+
+  allRolls.forEach(r => {
+    if (r.id === roll.id) return;
+    
+    const offset = calculateAbsoluteOffset(r, roll.id, allRolls);
+    if (offset.isValid) {
+      (r.cuts || []).forEach(c => {
+        // Skip inventory cuts on descendant rolls to avoid duplicate gray blocks
+        if (c.isInventoryCut) return;
+        
+        list.push({
+          ...c,
+          x: offset.x + c.x,
+          y: offset.y + c.y,
+          parentRollId: r.id
+        } as any);
+      });
+    }
+  });
+
+  return list;
 };

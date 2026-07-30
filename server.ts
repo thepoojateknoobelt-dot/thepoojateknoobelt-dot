@@ -171,6 +171,13 @@ async function initializeDatabase() {
       console.warn('Failed to add reorder_level column:', alterErr);
     }
 
+    // Add lots column if it doesn't exist yet
+    try {
+      await pool.query(`ALTER TABLE material_stocks ADD COLUMN IF NOT EXISTS lots JSONB`);
+    } catch (alterErr) {
+      console.warn('Failed to add lots column:', alterErr);
+    }
+
     // Seed default material stocks if empty
     try {
       const stockCheck = await pool.query('SELECT COUNT(*) FROM material_stocks');
@@ -1736,7 +1743,8 @@ app.get('/api/material-stocks', async (req, res) => {
       name: row.name,
       quantity: parseFloat(row.quantity),
       unit: row.unit,
-      reorderLevel: parseFloat(row.reorder_level) || 0
+      reorderLevel: parseFloat(row.reorder_level) || 0,
+      lots: typeof row.lots === 'string' ? JSON.parse(row.lots) : (row.lots || [])
     })));
   } catch (err) {
     console.error('Failed to get material stocks', err);
@@ -1746,14 +1754,14 @@ app.get('/api/material-stocks', async (req, res) => {
 
 app.post('/api/material-stocks', async (req: any, res) => {
   try {
-    const { name, quantity, unit, reorderLevel } = req.body;
+    const { name, quantity, unit, reorderLevel, lots } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
     const id = 'stock-' + Date.now();
     await pool.query(
-      'INSERT INTO material_stocks (id, name, quantity, unit, reorder_level) VALUES ($1, $2, $3, $4, $5)', 
-      [id, name.trim(), parseFloat(quantity) || 0, (unit || 'pcs').trim(), parseFloat(reorderLevel) || 0]
+      'INSERT INTO material_stocks (id, name, quantity, unit, reorder_level, lots) VALUES ($1, $2, $3, $4, $5, $6)', 
+      [id, name.trim(), parseFloat(quantity) || 0, (unit || 'pcs').trim(), parseFloat(reorderLevel) || 0, JSON.stringify(lots || [])]
     );
-    res.json({ id, name: name.trim(), quantity: parseFloat(quantity) || 0, unit: (unit || 'pcs').trim(), reorderLevel: parseFloat(reorderLevel) || 0 });
+    res.json({ id, name: name.trim(), quantity: parseFloat(quantity) || 0, unit: (unit || 'pcs').trim(), reorderLevel: parseFloat(reorderLevel) || 0, lots: lots || [] });
   } catch (err: any) {
     console.error('Failed to add material stock', err);
     if (err.code === '23505') {
@@ -1765,13 +1773,13 @@ app.post('/api/material-stocks', async (req: any, res) => {
 
 app.put('/api/material-stocks/:id', async (req: any, res) => {
   try {
-    const { name, quantity, unit, reorderLevel } = req.body;
+    const { name, quantity, unit, reorderLevel, lots } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
     await pool.query(
-      'UPDATE material_stocks SET name = $1, quantity = $2, unit = $3, reorder_level = $4 WHERE id = $5',
-      [name.trim(), parseFloat(quantity) || 0, (unit || 'pcs').trim(), parseFloat(reorderLevel) || 0, req.params.id]
+      'UPDATE material_stocks SET name = $1, quantity = $2, unit = $3, reorder_level = $4, lots = $5 WHERE id = $6',
+      [name.trim(), parseFloat(quantity) || 0, (unit || 'pcs').trim(), parseFloat(reorderLevel) || 0, JSON.stringify(lots || []), req.params.id]
     );
-    res.json({ id: req.params.id, name: name.trim(), quantity: parseFloat(quantity) || 0, unit: (unit || 'pcs').trim(), reorderLevel: parseFloat(reorderLevel) || 0 });
+    res.json({ id: req.params.id, name: name.trim(), quantity: parseFloat(quantity) || 0, unit: (unit || 'pcs').trim(), reorderLevel: parseFloat(reorderLevel) || 0, lots: lots || [] });
   } catch (err: any) {
     console.error('Failed to update material stock', err);
     if (err.code === '23505') {
@@ -1803,9 +1811,37 @@ app.patch('/api/material-stocks/:id/refill', async (req: any, res) => {
     if (addQuantity === undefined || isNaN(addQuantity) || parseFloat(addQuantity) <= 0) {
       return res.status(400).json({ error: 'Valid addQuantity is required' });
     }
+
+    // Fetch current lots to append the new refilled pieces
+    const currentRes = await pool.query('SELECT lots FROM material_stocks WHERE id = $1', [req.params.id]);
+    let lots = [];
+    if (currentRes.rowCount > 0 && currentRes.rows[0].lots) {
+      lots = typeof currentRes.rows[0].lots === 'string' 
+        ? JSON.parse(currentRes.rows[0].lots) 
+        : currentRes.rows[0].lots;
+    }
+    const addQty = parseFloat(addQuantity);
+
+    const isInt = Number.isInteger(addQty);
+    const newPieces = [];
+    if (isInt && addQty > 0) {
+      for (let i = 0; i < addQty; i++) {
+        newPieces.push({ pieceNo: i + 1, weight: 0 });
+      }
+    } else if (addQty > 0) {
+      newPieces.push({ pieceNo: 1, weight: addQty });
+    }
+
+    if (newPieces.length > 0) {
+      lots.push({
+        lotNumber: `Refill-${new Date().toISOString().slice(0, 10)}`,
+        pieces: newPieces
+      });
+    }
+
     const result = await pool.query(
-      'UPDATE material_stocks SET quantity = quantity + $1 WHERE id = $2 RETURNING *',
-      [parseFloat(addQuantity), req.params.id]
+      'UPDATE material_stocks SET quantity = quantity + $1, lots = $2 WHERE id = $3 RETURNING *',
+      [addQty, JSON.stringify(lots), req.params.id]
     );
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Material stock not found' });
@@ -1816,7 +1852,8 @@ app.patch('/api/material-stocks/:id/refill', async (req: any, res) => {
       name: row.name,
       quantity: parseFloat(row.quantity),
       unit: row.unit,
-      reorderLevel: parseFloat(row.reorder_level) || 0
+      reorderLevel: parseFloat(row.reorder_level) || 0,
+      lots: typeof row.lots === 'string' ? JSON.parse(row.lots) : (row.lots || [])
     });
   } catch (err) {
     console.error('Failed to refill stock', err);
@@ -1862,10 +1899,62 @@ app.post('/api/material-issues', async (req: any, res) => {
     if (!quantity || quantity <= 0) return res.status(400).json({ error: 'Quantity must be greater than 0' });
 
     if (materialId) {
-      const stockRow = await pool.query('SELECT quantity FROM material_stocks WHERE id = $1', [materialId]);
+      const stockRow = await pool.query('SELECT quantity, lots FROM material_stocks WHERE id = $1', [materialId]);
       if (stockRow.rows.length > 0) {
-        const newQty = Math.max(0, parseFloat(stockRow.rows[0].quantity) - parseFloat(quantity));
-        await pool.query('UPDATE material_stocks SET quantity = $1 WHERE id = $2', [newQty, materialId]);
+        const currentQty = parseFloat(stockRow.rows[0].quantity);
+        const qtyToIssue = parseFloat(quantity);
+        const newQty = Math.max(0, currentQty - qtyToIssue);
+        
+        let lots = [];
+        if (stockRow.rows[0].lots) {
+          lots = typeof stockRow.rows[0].lots === 'string' 
+            ? JSON.parse(stockRow.rows[0].lots) 
+            : stockRow.rows[0].lots;
+        }
+        
+        if (lots && lots.length > 0) {
+          let remainingToIssue = qtyToIssue;
+          const isInt = Number.isInteger(qtyToIssue);
+          if (isInt) {
+            for (let i = 0; i < lots.length; i++) {
+              if (remainingToIssue <= 0) break;
+              const lot = lots[i];
+              if (lot.pieces && lot.pieces.length > 0) {
+                const piecesCount = lot.pieces.length;
+                if (piecesCount <= remainingToIssue) {
+                  remainingToIssue -= piecesCount;
+                  lot.pieces = [];
+                } else {
+                  lot.pieces = lot.pieces.slice(remainingToIssue);
+                  remainingToIssue = 0;
+                }
+              }
+            }
+          } else {
+            for (let i = 0; i < lots.length; i++) {
+              if (remainingToIssue <= 0) break;
+              const lot = lots[i];
+              if (lot.pieces && lot.pieces.length > 0) {
+                while (lot.pieces.length > 0 && remainingToIssue > 0) {
+                  const firstPiece = lot.pieces[0];
+                  if (firstPiece.weight <= remainingToIssue && firstPiece.weight > 0) {
+                    remainingToIssue -= firstPiece.weight;
+                    lot.pieces.shift();
+                  } else {
+                    if (firstPiece.weight > 0) {
+                      firstPiece.weight = parseFloat((firstPiece.weight - remainingToIssue).toFixed(3));
+                    }
+                    remainingToIssue = 0;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          lots = lots.filter((l: any) => l.pieces && l.pieces.length > 0);
+        }
+
+        await pool.query('UPDATE material_stocks SET quantity = $1, lots = $2 WHERE id = $3', [newQty, JSON.stringify(lots), materialId]);
       }
     }
 
@@ -1973,11 +2062,61 @@ app.post('/api/material-requests/:id/approve', async (req: any, res) => {
 
     const materialId = request.material_id;
     if (materialId) {
-      const stockRes = await pool.query('SELECT quantity FROM material_stocks WHERE id = $1', [materialId]);
+      const stockRes = await pool.query('SELECT quantity, lots FROM material_stocks WHERE id = $1', [materialId]);
       if (stockRes.rowCount! > 0) {
         const currentStock = parseFloat(stockRes.rows[0].quantity);
         const newQty = Math.max(0, currentStock - appQty);
-        await pool.query('UPDATE material_stocks SET quantity = $1 WHERE id = $2', [newQty, materialId]);
+        
+        let lots = [];
+        if (stockRes.rows[0].lots) {
+          lots = typeof stockRes.rows[0].lots === 'string' 
+            ? JSON.parse(stockRes.rows[0].lots) 
+            : stockRes.rows[0].lots;
+        }
+        
+        if (lots && lots.length > 0) {
+          let remainingToIssue = appQty;
+          const isInt = Number.isInteger(appQty);
+          if (isInt) {
+            for (let i = 0; i < lots.length; i++) {
+              if (remainingToIssue <= 0) break;
+              const lot = lots[i];
+              if (lot.pieces && lot.pieces.length > 0) {
+                const piecesCount = lot.pieces.length;
+                if (piecesCount <= remainingToIssue) {
+                  remainingToIssue -= piecesCount;
+                  lot.pieces = [];
+                } else {
+                  lot.pieces = lot.pieces.slice(remainingToIssue);
+                  remainingToIssue = 0;
+                }
+              }
+            }
+          } else {
+            for (let i = 0; i < lots.length; i++) {
+              if (remainingToIssue <= 0) break;
+              const lot = lots[i];
+              if (lot.pieces && lot.pieces.length > 0) {
+                while (lot.pieces.length > 0 && remainingToIssue > 0) {
+                  const firstPiece = lot.pieces[0];
+                  if (firstPiece.weight <= remainingToIssue && firstPiece.weight > 0) {
+                    remainingToIssue -= firstPiece.weight;
+                    lot.pieces.shift();
+                  } else {
+                    if (firstPiece.weight > 0) {
+                      firstPiece.weight = parseFloat((firstPiece.weight - remainingToIssue).toFixed(3));
+                    }
+                    remainingToIssue = 0;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          lots = lots.filter((l: any) => l.pieces && l.pieces.length > 0);
+        }
+
+        await pool.query('UPDATE material_stocks SET quantity = $1, lots = $2 WHERE id = $3', [newQty, JSON.stringify(lots), materialId]);
       }
     }
 
@@ -2172,17 +2311,20 @@ app.get('/api/rolls', async (req, res) => {
 });
 
 app.post('/api/rolls', async (req, res) => {
-  const { id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived, isReuse, parentRollId, status } = req.body;
+  const { id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived, isReuse, parentRollId, status, reorderLevel } = req.body;
   const computedIsReuse = isReuse || (id && id.startsWith('REUSE-')) || false;
   try {
     await pool.query(
-      `INSERT INTO rolls (id, material_type, full_width, full_length, total_sqm, remaining_sqm, is_archived, is_reuse, parent_roll_id, status) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived || false, computedIsReuse, parentRollId || null, status || 'active']
+      `INSERT INTO rolls (id, material_type, full_width, full_length, total_sqm, remaining_sqm, is_archived, is_reuse, parent_roll_id, status, reorder_level) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived || false, computedIsReuse, parentRollId || null, status || 'active', parseFloat(reorderLevel) || 0]
     );
-    res.json({ id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived: isArchived || false, isReuse: computedIsReuse, parentRollId: parentRollId || null, status: status || 'active', cuts: [] });
-  } catch (err) {
+    res.json({ id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived: isArchived || false, isReuse: computedIsReuse, parentRollId: parentRollId || null, status: status || 'active', reorderLevel: parseFloat(reorderLevel) || 0, cuts: [] });
+  } catch (err: any) {
     console.error('Failed to create roll', err);
+    if (err.code === '23505') {
+      return res.status(400).json({ error: `Roll ID "${id}" already exists in the database. Please use a unique Roll ID.` });
+    }
     res.status(500).json({ error: 'Failed to create roll' });
   }
 });
@@ -2550,6 +2692,33 @@ app.put('/api/quotations/:id', authenticate, async (req, res) => {
   } catch (err) {
     console.error('Failed to update quotation', err);
     res.status(500).json({ error: 'Failed to update quotation' });
+  }
+});
+
+app.delete('/api/quotations/:id', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const result = await pool.query('DELETE FROM quotations WHERE id = $1', [req.params.id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Quotation not found' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to delete quotation', err);
+    res.status(500).json({ error: 'Failed to delete quotation' });
+  }
+});
+
+app.post('/api/quotations/bulk-delete', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'No IDs provided' });
+  }
+  try {
+    await pool.query('DELETE FROM quotations WHERE id = ANY($1)', [ids]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to bulk delete quotations', err);
+    res.status(500).json({ error: 'Failed to delete quotations' });
   }
 });
 

@@ -126,6 +126,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
           <LogOut className="h-5 w-5" />
           Sign Out
         </Button>
+        <div className="mt-3 text-[10px] text-zinc-500/50 font-mono text-center select-none">
+          {(() => {
+            const build = "01";
+            const now = new Date();
+            const mm = String(now.getMonth() + 1).padStart(2, '0');
+            const yy = String(now.getFullYear()).slice(-2);
+            return `V.${mm}.${yy}.${build}`;
+          })()}
+        </div>
       </div>
     </aside>
   );

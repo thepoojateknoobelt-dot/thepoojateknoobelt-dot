@@ -21,12 +21,20 @@ export const Dashboard = () => {
 
   const getInitialModule = () => {
     const params = new URLSearchParams(window.location.search);
-    return (params.get('module') as 'master' | 'pricing' | 'production' | 'presence') || 'master';
+    const urlMod = params.get('module') as 'master' | 'pricing' | 'production' | 'presence';
+    if (urlMod) return urlMod;
+    const localMod = localStorage.getItem('ptb_active_module') as 'master' | 'pricing' | 'production' | 'presence';
+    if (localMod) return localMod;
+    return 'master';
   };
 
   const getInitialTab = () => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('tab') || 'dashboard';
+    const urlTab = params.get('tab');
+    if (urlTab) return urlTab;
+    const localTab = localStorage.getItem('ptb_active_tab');
+    if (localTab) return localTab;
+    return 'dashboard';
   };
 
   const [activeModule, setActiveModule] = useState<'master' | 'pricing' | 'production' | 'presence'>(getInitialModule);
@@ -35,6 +43,28 @@ export const Dashboard = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Keep localStorage and URL in sync whenever module or tab changes
+  useEffect(() => {
+    try {
+      localStorage.setItem('ptb_active_module', activeModule);
+      localStorage.setItem('ptb_active_tab', activeTab);
+    } catch (e) {
+      console.warn('Failed to save state to localStorage', e);
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    params.set('module', activeModule);
+    if (activeModule === 'pricing') {
+      params.set('tab', activeTab);
+    } else {
+      params.delete('tab');
+    }
+    const newSearch = `?${params.toString()}`;
+    if (window.location.search !== newSearch) {
+      window.history.replaceState({ module: activeModule, tab: activeTab }, '', newSearch);
+    }
+  }, [activeModule, activeTab]);
 
   const handleModuleChange = (mod: 'master' | 'pricing' | 'production' | 'presence') => {
     setActiveModule(mod);

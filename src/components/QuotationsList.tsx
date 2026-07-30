@@ -33,6 +33,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
   const [selectedQuotation, setSelectedQuotation] = useState<EnhancedQuotation | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // Tab State & Company State
   const [activeTab, setActiveTab] = useState<'quotations' | 'orders'>('quotations');
@@ -67,10 +68,10 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
       const res = await fetch('/api/quotations');
       if (res.ok) {
         const data = await res.json();
-        
+
         // Sort chronologically ascending to assign permanent order numbers starting at 100
         const sortedChronologically = [...data].sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-        
+
         const withOrderNumbers = sortedChronologically.map((q: any, index: number) => ({
           ...q,
           orderNumber: 100 + index
@@ -78,7 +79,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
 
         // Sort descending by createdAt for display
         withOrderNumbers.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        
+
         setQuotations(withOrderNumbers);
       }
     } catch (err) {
@@ -95,6 +96,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
 
   useEffect(() => {
     setSelectedStatus('all');
+    setSelectedIds([]); // Clear selection when active tab changes
   }, [activeTab]);
 
   const handleApprove = async (q: Quotation) => {
@@ -158,7 +160,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
     if (!convertingQuotation) return;
     const selectedComp = companies.find(c => c.id === selectedCompanyId);
     const companyName = selectedComp ? selectedComp.name : 'Pooja Tekno Belt';
-    
+
     try {
       const res = await fetch(`/api/quotations/${convertingQuotation.id}`, {
         method: 'PUT',
@@ -233,6 +235,42 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
     }
   };
 
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) return;
+    if (!window.confirm(`Are you sure you want to delete the ${selectedIds.length} selected records?`)) return;
+
+    try {
+      const res = await fetch('/api/quotations/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds })
+      });
+
+      if (!res.ok) throw new Error('Bulk delete failed');
+
+      toast.success(`${selectedIds.length} records deleted successfully!`);
+      setSelectedIds([]);
+      fetchQuotations();
+    } catch (err) {
+      toast.error('Failed to delete selected records');
+    }
+  };
+
+  const handleSingleDelete = async (id: string) => {
+    if (!window.confirm("Are you sure you want to delete this record?")) return;
+    try {
+      const res = await fetch(`/api/quotations/${id}`, {
+        method: 'DELETE'
+      });
+      if (!res.ok) throw new Error('Delete failed');
+      toast.success('Record deleted successfully');
+      setSelectedQuotation(null);
+      fetchQuotations();
+    } catch (err) {
+      toast.error('Failed to delete record');
+    }
+  };
+
   // Get unique belt types for the filter dropdown
   const uniqueBeltTypes = Array.from(new Set(quotations.map(q => q.beltType))).filter(Boolean);
 
@@ -250,7 +288,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
       const matchBeltType = q.beltType?.toLowerCase().includes(query);
       const matchBeltStyle = q.beltStyle?.toLowerCase().includes(query);
       const matchOrderNum = q.orderNumber?.toString().includes(query) || `#${q.orderNumber}`.includes(query);
-      
+
       if (!matchClient && !matchCreatedBy && !matchBeltType && !matchBeltStyle && !matchOrderNum) {
         return false;
       }
@@ -308,7 +346,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
       Math.round(q.totalCost),
       q.status
     ]);
-    
+
     const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
@@ -610,9 +648,9 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
               </SelectContent>
             </Select>
             {hasActiveFilters && (
-              <Button 
-                variant="ghost" 
-                size="icon" 
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={handleResetFilters}
                 className="h-9 w-9 border border-zinc-200 text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100 shrink-0"
                 title="Reset Filters"
@@ -633,41 +671,71 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                 Showing {filteredQuotations.length} of {quotations.length} records {hasActiveFilters && '(Filtered)'}
               </CardDescription>
             </div>
-            <div className="flex bg-zinc-100 p-1 rounded-lg border border-zinc-200/50 self-start sm:self-auto shadow-inner">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setActiveTab('quotations')}
-                className={cn(
-                  "px-4 py-1.5 h-8 text-xs font-bold transition-all rounded-md",
-                  activeTab === 'quotations'
-                    ? "bg-white text-zinc-900 shadow-sm"
-                    : "text-zinc-500 hover:text-zinc-855"
-                )}
-              >
-                Quotations
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setActiveTab('orders')}
-                className={cn(
-                  "px-4 py-1.5 h-8 text-xs font-bold transition-all rounded-md",
-                  activeTab === 'orders'
-                    ? "bg-white text-zinc-900 shadow-sm"
-                    : "text-zinc-500 hover:text-zinc-855"
-                )}
-              >
-                Orders
-              </Button>
+            <div className="flex items-center gap-3 self-start sm:self-auto">
+              {user?.role === 'admin' && selectedIds.length > 0 && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="h-8 text-xs font-bold gap-1.5 cursor-pointer bg-red-600 hover:bg-red-700 text-white"
+                  onClick={handleBulkDelete}
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Delete Selected ({selectedIds.length})
+                </Button>
+              )}
+              <div className="flex bg-zinc-100 p-1 rounded-lg border border-zinc-200/50 shadow-inner">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setActiveTab('quotations')}
+                  className={cn(
+                    "px-4 py-1.5 h-8 text-xs font-bold transition-all rounded-md",
+                    activeTab === 'quotations'
+                      ? "bg-white text-zinc-900 shadow-sm"
+                      : "text-zinc-500 hover:text-zinc-855"
+                  )}
+                >
+                  Quotations
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setActiveTab('orders')}
+                  className={cn(
+                    "px-4 py-1.5 h-8 text-xs font-bold transition-all rounded-md",
+                    activeTab === 'orders'
+                      ? "bg-white text-zinc-900 shadow-sm"
+                      : "text-zinc-500 hover:text-zinc-855"
+                  )}
+                >
+                  Orders
+                </Button>
+              </div>
             </div>
-          </div>
         </CardHeader>
         <CardContent>
           <div className="rounded-md border border-zinc-200 overflow-hidden">
             <Table>
               <TableHeader className="bg-zinc-50/50">
                 <TableRow>
+                  {user?.role === 'admin' && (
+                    <TableHead className="w-12 text-center py-3">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-950 cursor-pointer"
+                        checked={filteredQuotations.length > 0 && filteredQuotations.every(q => selectedIds.includes(q.id))}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            const newSelected = Array.from(new Set([...selectedIds, ...filteredQuotations.map(q => q.id)]));
+                            setSelectedIds(newSelected);
+                          } else {
+                            const filteredList = filteredQuotations.map(q => q.id);
+                            setSelectedIds(prev => prev.filter(id => !filteredList.includes(id)));
+                          }
+                        }}
+                      />
+                    </TableHead>
+                  )}
                   <TableHead className="w-[100px] font-bold text-zinc-700">Order ID</TableHead>
                   <TableHead className="font-bold text-zinc-700">Date</TableHead>
                   <TableHead className="font-bold text-zinc-700">Client</TableHead>
@@ -682,17 +750,33 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
               <TableBody>
                 {filteredQuotations.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={activeTab === 'orders' ? 7 : 6} className="h-24 text-center text-zinc-400 italic">
+                    <TableCell colSpan={(activeTab === 'orders' ? 7 : 6) + (user?.role === 'admin' ? 1 : 0)} className="h-24 text-center text-zinc-400 italic">
                       No matching records found.
                     </TableCell>
                   </TableRow>
                 ) : (
                   filteredQuotations.map((q) => (
-                    <TableRow 
-                      key={q.id} 
+                    <TableRow
+                      key={q.id}
                       className="cursor-pointer hover:bg-zinc-50/50 transition-colors"
                       onClick={() => setSelectedQuotation(q)}
                     >
+                      {user?.role === 'admin' && (
+                        <TableCell onClick={(e) => e.stopPropagation()} className="w-12 text-center">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-950 cursor-pointer"
+                            checked={selectedIds.includes(q.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedIds(prev => [...prev, q.id]);
+                              } else {
+                                setSelectedIds(prev => prev.filter(id => id !== q.id));
+                              }
+                            }}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell className="font-mono font-bold text-zinc-700 text-sm">
                         #{q.orderNumber}
                       </TableCell>
@@ -1041,6 +1125,15 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                 Execute & Smart Cut
               </Button>
             )}
+            {user?.role === 'admin' && selectedQuotation && (
+              <Button
+                variant="destructive"
+                className="gap-1.5 bg-red-650 hover:bg-red-750 text-white font-bold cursor-pointer"
+                onClick={() => handleSingleDelete(selectedQuotation.id)}
+              >
+                Delete
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setSelectedQuotation(null)}>Close</Button>
           </DialogFooter>
         </DialogContent>
@@ -1054,8 +1147,8 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label>Reason for Rejection</Label>
-              <Input 
-                placeholder="e.g. Margin too low, Standard pricing applies" 
+              <Input
+                placeholder="e.g. Margin too low, Standard pricing applies"
                 value={rejectionReason}
                 onChange={(e) => setRejectionReason(e.target.value)}
               />
@@ -1104,8 +1197,8 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsConvertDialogOpen(false)}>Cancel</Button>
-            <Button 
-              className="bg-indigo-600 hover:bg-indigo-700 text-white" 
+            <Button
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
               onClick={confirmConvertToOrder}
               disabled={companies.length === 0 || !selectedCompanyId}
             >

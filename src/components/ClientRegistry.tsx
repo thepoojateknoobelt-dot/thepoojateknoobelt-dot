@@ -238,7 +238,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                   <TableHead>Company</TableHead>
                   <TableHead>City</TableHead>
                   <TableHead>Mobile Number</TableHead>
-                  <TableHead>Profit Margins</TableHead>
+                  {user?.role === 'admin' && <TableHead>Profit Margins</TableHead>}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -273,126 +273,128 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                         c.mobile || '-'
                       )}
                     </TableCell>
-                    <TableCell>
-                      {editingId === c.id ? (
-                        <div className="space-y-4 max-w-2xl bg-zinc-50 p-4 rounded-xl border border-zinc-200">
-                          {(Array.isArray(config?.beltTypes) ? config.beltTypes : [])?.map?.(type => (
-                            <div key={type.id} className="space-y-2">
-                              <div className="flex items-center justify-between">
-                                <span className="text-xs font-bold uppercase tracking-wider text-zinc-600">{type.name} Margins</span>
-                                <Button 
-                                  size="sm" 
-                                  variant="ghost" 
-                                  className="h-6 text-[10px]"
-                                  onClick={() => {
-                                    const current = Array.isArray(editMargins[type.name]) ? editMargins[type.name] : [];
-                                    const lastMax = current.length > 0 ? current[current.length-1].maxLength : 0;
-                                    setEditMargins({
-                                      ...editMargins,
-                                      [type.name]: [...current, { minLength: lastMax || 0, maxLength: null, margin: 20 }]
-                                    });
-                                  }}
-                                >
-                                  + Range
-                                </Button>
-                              </div>
-                              <div className="space-y-1">
-                                {(Array.isArray(editMargins[type.name]) ? editMargins[type.name] : []).map((range, idx) => (
-                                  <div key={idx} className="flex items-center gap-2 bg-white p-2 rounded-lg border border-zinc-100 shadow-sm">
-                                    <div className="flex-1 flex items-center gap-2">
-                                      <Input 
-                                        type="number" 
-                                        className="h-7 text-xs w-16" 
-                                        value={range.minLength} 
-                                        onChange={(e) => {
+                    {user?.role === 'admin' && (
+                      <TableCell>
+                        {editingId === c.id ? (
+                          <div className="space-y-4 max-w-2xl bg-zinc-50 p-4 rounded-xl border border-zinc-200">
+                            {(Array.isArray(config?.beltTypes) ? config.beltTypes : [])?.map?.(type => (
+                              <div key={type.id} className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-bold uppercase tracking-wider text-zinc-600">{type.name} Margins</span>
+                                  <Button 
+                                    size="sm" 
+                                    variant="ghost" 
+                                    className="h-6 text-[10px]"
+                                    onClick={() => {
+                                      const current = Array.isArray(editMargins[type.name]) ? editMargins[type.name] : [];
+                                      const lastMax = current.length > 0 ? current[current.length-1].maxLength : 0;
+                                      setEditMargins({
+                                        ...editMargins,
+                                        [type.name]: [...current, { minLength: lastMax || 0, maxLength: null, margin: 20 }]
+                                      });
+                                    }}
+                                  >
+                                    + Range
+                                  </Button>
+                                </div>
+                                <div className="space-y-1">
+                                  {(Array.isArray(editMargins[type.name]) ? editMargins[type.name] : []).map((range, idx) => (
+                                    <div key={idx} className="flex items-center gap-2 bg-white p-2 rounded-lg border border-zinc-100 shadow-sm">
+                                      <div className="flex-1 flex items-center gap-2">
+                                        <Input 
+                                          type="number" 
+                                          className="h-7 text-xs w-16" 
+                                          value={range.minLength} 
+                                          onChange={(e) => {
+                                            const newRanges = [...editMargins[type.name]];
+                                            newRanges[idx].minLength = parseFloat(e.target.value);
+                                            setEditMargins({...editMargins, [type.name]: newRanges});
+                                          }}
+                                        />
+                                        <span className="text-[10px] text-zinc-400">to</span>
+                                        <Input 
+                                          type="number" 
+                                          className="h-7 text-xs w-16" 
+                                          value={range.maxLength || ''} 
+                                          placeholder="∞"
+                                          onChange={(e) => {
+                                            const newRanges = [...editMargins[type.name]];
+                                            newRanges[idx].maxLength = e.target.value ? parseFloat(e.target.value) : null;
+                                            setEditMargins({...editMargins, [type.name]: newRanges});
+                                          }}
+                                        />
+                                        <span className="text-[10px] text-zinc-400">mtr</span>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <Input 
+                                          type="number" 
+                                          className="h-7 text-xs w-14 font-bold text-emerald-700" 
+                                          value={range.margin} 
+                                          onChange={(e) => {
+                                            const newRanges = [...editMargins[type.name]];
+                                            newRanges[idx].margin = parseFloat(e.target.value);
+                                            setEditMargins({...editMargins, [type.name]: newRanges});
+                                          }}
+                                        />
+                                        <span className="text-[10px] text-zinc-400">%</span>
+                                      </div>
+                                      <Button 
+                                        size="icon" 
+                                        variant="ghost" 
+                                        className="h-6 w-6 text-zinc-300 hover:text-red-500"
+                                        onClick={() => {
                                           const newRanges = [...editMargins[type.name]];
-                                          newRanges[idx].minLength = parseFloat(e.target.value);
+                                          newRanges.splice(idx, 1);
                                           setEditMargins({...editMargins, [type.name]: newRanges});
                                         }}
-                                      />
-                                      <span className="text-[10px] text-zinc-400">to</span>
-                                      <Input 
-                                        type="number" 
-                                        className="h-7 text-xs w-16" 
-                                        value={range.maxLength || ''} 
-                                        placeholder="∞"
-                                        onChange={(e) => {
-                                          const newRanges = [...editMargins[type.name]];
-                                          newRanges[idx].maxLength = e.target.value ? parseFloat(e.target.value) : null;
-                                          setEditMargins({...editMargins, [type.name]: newRanges});
-                                        }}
-                                      />
-                                      <span className="text-[10px] text-zinc-400">mtr</span>
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </Button>
                                     </div>
-                                    <div className="flex items-center gap-1">
-                                      <Input 
-                                        type="number" 
-                                        className="h-7 text-xs w-14 font-bold text-emerald-700" 
-                                        value={range.margin} 
-                                        onChange={(e) => {
-                                          const newRanges = [...editMargins[type.name]];
-                                          newRanges[idx].margin = parseFloat(e.target.value);
-                                          setEditMargins({...editMargins, [type.name]: newRanges});
-                                        }}
-                                      />
-                                      <span className="text-[10px] text-zinc-400">%</span>
-                                    </div>
-                                    <Button 
-                                      size="icon" 
-                                      variant="ghost" 
-                                      className="h-6 w-6 text-zinc-300 hover:text-red-500"
-                                      onClick={() => {
-                                        const newRanges = [...editMargins[type.name]];
-                                        newRanges.splice(idx, 1);
-                                        setEditMargins({...editMargins, [type.name]: newRanges});
-                                      }}
-                                    >
-                                      <X className="h-3 w-3" />
-                                    </Button>
-                                  </div>
-                                ))}
+                                  ))}
+                                </div>
                               </div>
+                            ))}
+                            <div className="flex justify-end gap-2 pt-2 border-t">
+                              <Button size="sm" variant="ghost" className="h-8 text-zinc-500" onClick={() => setEditingId(null)}>Cancel</Button>
+                              <Button size="sm" className="h-8 gap-1" onClick={() => handleUpdateClient(c.id)}>
+                                <Save className="h-4 w-4" /> Save Changes
+                              </Button>
                             </div>
-                          ))}
-                          <div className="flex justify-end gap-2 pt-2 border-t">
-                            <Button size="sm" variant="ghost" className="h-8 text-zinc-500" onClick={() => setEditingId(null)}>Cancel</Button>
-                            <Button size="sm" className="h-8 gap-1" onClick={() => handleUpdateClient(c.id)}>
-                              <Save className="h-4 w-4" /> Save Changes
-                            </Button>
                           </div>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col gap-2">
-                           {(Array.isArray(config?.beltTypes) ? config.beltTypes : [])?.map?.(type => (
-                             <div key={type.id} className="flex flex-col gap-1">
-                               <span className="text-[10px] font-bold text-zinc-400 uppercase">{type.name}</span>
-                               <div className="flex flex-wrap gap-1">
-                                 {(Array.isArray(c.profitMargins?.[type.name]) ? c.profitMargins[type.name] : []).map((r, i) => (
-                                   <span key={i} className="bg-zinc-100 text-[10px] px-2 py-0.5 rounded-full border border-zinc-200">
-                                     {r.minLength}-{r.maxLength || '∞'}m: <span className="font-bold text-emerald-700">{r.margin}%</span>
-                                   </span>
-                                 ))}
+                        ) : (
+                          <div className="flex flex-col gap-2">
+                             {(Array.isArray(config?.beltTypes) ? config.beltTypes : [])?.map?.(type => (
+                               <div key={type.id} className="flex flex-col gap-1">
+                                 <span className="text-[10px] font-bold text-zinc-400 uppercase">{type.name}</span>
+                                 <div className="flex flex-wrap gap-1">
+                                   {(Array.isArray(c.profitMargins?.[type.name]) ? c.profitMargins[type.name] : []).map((r, i) => (
+                                     <span key={i} className="bg-zinc-100 text-[10px] px-2 py-0.5 rounded-full border border-zinc-200">
+                                       {r.minLength}-{r.maxLength || '∞'}m: <span className="font-bold text-emerald-700">{r.margin}%</span>
+                                     </span>
+                                   ))}
+                                 </div>
                                </div>
-                             </div>
-                           ))}
-                           <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="h-7 w-fit text-[10px] gap-1 text-zinc-500 hover:text-zinc-900"
-                            onClick={() => {
-                              setEditingId(c.id);
-                              setEditMargins(c.profitMargins || {});
-                              setEditName(c.name || '');
-                              setEditCompany(c.company || '');
-                              setEditCity(c.city || '');
-                              setEditMobile(c.mobile || '');
-                            }}
-                           >
-                            <Edit2 className="h-3 w-3" /> Edit Details
-                           </Button>
-                        </div>
-                      )}
-                    </TableCell>
+                             ))}
+                             <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="h-7 w-fit text-[10px] gap-1 text-zinc-500 hover:text-zinc-900"
+                              onClick={() => {
+                                setEditingId(c.id);
+                                setEditMargins(c.profitMargins || {});
+                                setEditName(c.name || '');
+                                setEditCompany(c.company || '');
+                                setEditCity(c.city || '');
+                                setEditMobile(c.mobile || '');
+                              }}
+                             >
+                              <Edit2 className="h-3 w-3" /> Edit Details
+                             </Button>
+                          </div>
+                        )}
+                      </TableCell>
+                    )}
                     <TableCell className="text-right">
                       <Button variant="ghost" size="icon" className="text-zinc-400 hover:text-red-600" onClick={() => handleDeleteClient(c.id, c.name)}>
                         <Trash2 className="h-4 w-4" />

@@ -2,7 +2,7 @@ import React, { useRef, useState } from 'react';
 import { Roll, Cut, Unit } from '../types';
 import { isSpaceAvailable } from '../services/optimizationEngine';
 import { Box, ChevronDown, ChevronUp, Maximize2 } from 'lucide-react';
-import { getShortRollId } from '../utils';
+import { getShortRollId, getResolvedRollCuts } from '../utils';
 
 interface RollVisualizerProps {
   roll: Roll;
@@ -19,6 +19,7 @@ interface RollVisualizerProps {
   height?: string;
   hideTitle?: boolean;
   noBorder?: boolean;
+  allRolls?: Roll[];
 }
 
 const CONVERSIONS: Record<Unit, number> = {
@@ -43,7 +44,8 @@ const RollVisualizer: React.FC<RollVisualizerProps> = ({
   onMaximize,
   height = 'h-[400px]',
   hideTitle = false,
-  noBorder = false
+  noBorder = false,
+  allRolls
 }) => {
   const [zoom, setZoom] = useState(0.8);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -57,6 +59,10 @@ const RollVisualizer: React.FC<RollVisualizerProps> = ({
   const conv = CONVERSIONS[unit];
   const isReuse = !!(roll.isReuse || (roll.id && (roll.id.toString().startsWith('REUSE-') || roll.id.toString().startsWith('INV-') || roll.id.toString().startsWith('SCRAP-'))));
   const RULER_SIZE = 55; // wider for clean Y-axis labels
+
+  const resolvedCuts = React.useMemo(() => {
+    return getResolvedRollCuts(roll, allRolls || []);
+  }, [roll.cuts, roll.id, allRolls]);
 
 
 
@@ -332,7 +338,7 @@ const RollVisualizer: React.FC<RollVisualizerProps> = ({
             <g transform={`translate(${RULER_SIZE}, ${RULER_SIZE})`}>
               <rect width={viewWidth} height={viewHeight} fill="#ffffff" stroke="#cbd5e1" strokeWidth="1" />
 
-              {roll.cuts.map((cut) => (
+              {resolvedCuts.map((cut) => (
                 <g 
                   key={cut.id} 
                   onClick={(e) => {
