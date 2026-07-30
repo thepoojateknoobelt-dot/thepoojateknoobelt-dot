@@ -7,7 +7,7 @@ import { Badge } from './ui/badge';
 import { toast } from 'sonner';
 import { formatCurrency, cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
-import { CheckCircle2, XCircle, ShoppingCart, Download, FileText, Clock, AlertCircle, Search, SlidersHorizontal, Calendar, Filter, X, RotateCcw, Building2, Printer, Scissors, Zap, Package, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, XCircle, ShoppingCart, Download, FileText, Clock, AlertCircle, Search, SlidersHorizontal, Calendar, Filter, X, RotateCcw, Building2, Printer, Scissors, Zap, Package, TriangleAlert, TrendingUp } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from './ui/dialog';
 import { Label } from './ui/label';
 import { Input } from './ui/input';
@@ -33,6 +33,8 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
   const [selectedQuotation, setSelectedQuotation] = useState<EnhancedQuotation | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
+  const [isApproveDialogOpen, setIsApproveDialogOpen] = useState(false);
+  const [approvedDiscount, setApprovedDiscount] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // Tab State & Company State
@@ -68,10 +70,10 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
       const res = await fetch('/api/quotations');
       if (res.ok) {
         const data = await res.json();
-
+        
         // Sort chronologically ascending to assign permanent order numbers starting at 100
         const sortedChronologically = [...data].sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-
+        
         const withOrderNumbers = sortedChronologically.map((q: any, index: number) => ({
           ...q,
           orderNumber: 100 + index
@@ -79,7 +81,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
 
         // Sort descending by createdAt for display
         withOrderNumbers.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
+        
         setQuotations(withOrderNumbers);
       }
     } catch (err) {
@@ -99,24 +101,34 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
     setSelectedIds([]); // Clear selection when active tab changes
   }, [activeTab]);
 
-  const handleApprove = async (q: Quotation) => {
-    try {
-      const newTotal = q.totalCost - (q.discountRequested || 0);
+  const handleApprove = (q: Quotation) => {
+    setApprovedDiscount((q.discountRequested || 0).toString());
+    setIsApproveDialogOpen(true);
+  };
 
-      const res = await fetch(`/api/quotations/${q.id}`, {
+  const handleApproveConfirm = async () => {
+    if (!selectedQuotation) return;
+    try {
+      const discountVal = parseFloat(approvedDiscount) || 0;
+      // Calculate new total cost based on the adjusted approved discount
+      const newTotal = selectedQuotation.totalCost + (selectedQuotation.salesMarkup || 0) - discountVal;
+
+      const res = await fetch(`/api/quotations/${selectedQuotation.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           status: 'approved',
-          totalCost: newTotal
+          totalCost: newTotal,
+          discountRequested: discountVal
         })
       });
 
       if (!res.ok) throw new Error('Approve failed');
 
       toast.success('Discount approved and price updated');
-      fetchQuotations();
+      setIsApproveDialogOpen(false);
       setSelectedQuotation(null);
+      fetchQuotations();
     } catch (err) {
       toast.error('Failed to approve');
     }
@@ -160,7 +172,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
     if (!convertingQuotation) return;
     const selectedComp = companies.find(c => c.id === selectedCompanyId);
     const companyName = selectedComp ? selectedComp.name : 'Pooja Tekno Belt';
-
+    
     try {
       const res = await fetch(`/api/quotations/${convertingQuotation.id}`, {
         method: 'PUT',
@@ -288,7 +300,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
       const matchBeltType = q.beltType?.toLowerCase().includes(query);
       const matchBeltStyle = q.beltStyle?.toLowerCase().includes(query);
       const matchOrderNum = q.orderNumber?.toString().includes(query) || `#${q.orderNumber}`.includes(query);
-
+      
       if (!matchClient && !matchCreatedBy && !matchBeltType && !matchBeltStyle && !matchOrderNum) {
         return false;
       }
@@ -346,7 +358,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
       Math.round(q.totalCost),
       q.status
     ]);
-
+    
     const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
@@ -370,7 +382,10 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
       ? q.items!.reduce((sum, item) => sum + item.totalCost, 0)
       : q.totalCost;
     const discountAmt = q.discountRequested || 0;
-    const finalAmt = q.totalCost;
+    const salesMarkupAmt = q.salesMarkup || 0;
+    const finalAmt = q.status === 'approved'
+      ? q.totalCost
+      : q.totalCost + salesMarkupAmt - discountAmt;
 
     // Render table rows
     let tableRowsHTML = '';
@@ -488,6 +503,12 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                 <td class="lbl">Items Total</td>
                 <td class="val">${formatCurrency(totalBeforeAdjustment)}</td>
               </tr>
+              ${salesMarkupAmt > 0 ? `
+              <tr>
+                <td class="lbl" style="color: #047857;">Sales Markup (+)</td>
+                <td class="val" style="color: #047857;">+ ${formatCurrency(salesMarkupAmt)}</td>
+              </tr>
+              ` : ''}
               ${discountAmt > 0 ? `
               <tr>
                 <td class="lbl" style="color: #b45309;">Special Adjustment (Discount)</td>
@@ -648,9 +669,9 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
               </SelectContent>
             </Select>
             {hasActiveFilters && (
-              <Button
-                variant="ghost"
-                size="icon"
+              <Button 
+                variant="ghost" 
+                size="icon" 
                 onClick={handleResetFilters}
                 className="h-9 w-9 border border-zinc-200 text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100 shrink-0"
                 title="Reset Filters"
@@ -673,9 +694,9 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
             </div>
             <div className="flex items-center gap-3 self-start sm:self-auto">
               {user?.role === 'admin' && selectedIds.length > 0 && (
-                <Button
-                  variant="destructive"
-                  size="sm"
+                <Button 
+                  variant="destructive" 
+                  size="sm" 
                   className="h-8 text-xs font-bold gap-1.5 cursor-pointer bg-red-600 hover:bg-red-700 text-white"
                   onClick={handleBulkDelete}
                 >
@@ -684,35 +705,36 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                 </Button>
               )}
               <div className="flex bg-zinc-100 p-1 rounded-lg border border-zinc-200/50 shadow-inner">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setActiveTab('quotations')}
-                  className={cn(
-                    "px-4 py-1.5 h-8 text-xs font-bold transition-all rounded-md",
-                    activeTab === 'quotations'
-                      ? "bg-white text-zinc-900 shadow-sm"
-                      : "text-zinc-500 hover:text-zinc-855"
-                  )}
-                >
-                  Quotations
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setActiveTab('orders')}
-                  className={cn(
-                    "px-4 py-1.5 h-8 text-xs font-bold transition-all rounded-md",
-                    activeTab === 'orders'
-                      ? "bg-white text-zinc-900 shadow-sm"
-                      : "text-zinc-500 hover:text-zinc-855"
-                  )}
-                >
-                  Orders
-                </Button>
-              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setActiveTab('quotations')}
+                className={cn(
+                  "px-4 py-1.5 h-8 text-xs font-bold transition-all rounded-md",
+                  activeTab === 'quotations'
+                    ? "bg-white text-zinc-900 shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-855"
+                )}
+              >
+                Quotations
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setActiveTab('orders')}
+                className={cn(
+                  "px-4 py-1.5 h-8 text-xs font-bold transition-all rounded-md",
+                  activeTab === 'orders'
+                    ? "bg-white text-zinc-900 shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-855"
+                )}
+              >
+                Orders
+              </Button>
             </div>
-        </CardHeader>
+          </div>
+        </div>
+      </CardHeader>
         <CardContent>
           <div className="rounded-md border border-zinc-200 overflow-hidden">
             <Table>
@@ -756,8 +778,8 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                   </TableRow>
                 ) : (
                   filteredQuotations.map((q) => (
-                    <TableRow
-                      key={q.id}
+                    <TableRow 
+                      key={q.id} 
                       className="cursor-pointer hover:bg-zinc-50/50 transition-colors"
                       onClick={() => setSelectedQuotation(q)}
                     >
@@ -821,7 +843,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
         </CardContent>
       </Card>
 
-      <Dialog open={!!selectedQuotation && !isRejectDialogOpen} onOpenChange={(open) => !open && setSelectedQuotation(null)}>
+      <Dialog open={!!selectedQuotation && !isRejectDialogOpen && !isApproveDialogOpen} onOpenChange={(open) => !open && setSelectedQuotation(null)}>
         <DialogContent className="max-w-4xl sm:max-w-5xl">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold flex items-center gap-2">
@@ -1080,6 +1102,16 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                   </div>
                 )}
 
+                {/* Sales Markup details */}
+                {selectedQuotation.salesMarkup && selectedQuotation.salesMarkup > 0 && (
+                  <div className="p-4 bg-emerald-50/60 rounded-2xl border border-emerald-100 space-y-1 shadow-sm">
+                    <div className="flex items-center gap-2 text-emerald-900 font-bold text-xs uppercase tracking-wider">
+                      <TrendingUp className="h-4 w-4 text-emerald-600" />
+                      Sales Markup Applied: +{formatCurrency(selectedQuotation.salesMarkup)}
+                    </div>
+                  </div>
+                )}
+
                 {/* Discount details */}
                 {selectedQuotation.discountRequested && selectedQuotation.discountRequested > 0 && (
                   <div className="p-4 bg-amber-50/60 rounded-2xl border border-amber-100 space-y-2 shadow-sm">
@@ -1088,9 +1120,40 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                       Discount Requested: {formatCurrency(selectedQuotation.discountRequested)}
                     </div>
                     <p className="text-xs text-amber-700 italic">"{selectedQuotation.discountReason}"</p>
-                    <p className="text-xs text-amber-600 font-extrabold">Final Price after discount: <span className="font-mono text-sm text-amber-900">{formatCurrency(Math.round(selectedQuotation.totalCost - selectedQuotation.discountRequested))}</span></p>
                   </div>
                 )}
+
+                {/* Net Price summary */}
+                <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-200 space-y-1 shadow-sm mt-2">
+                  <p className="text-xs text-zinc-650 font-extrabold flex justify-between items-center">
+                    <span>Base Items Cost:</span>
+                    <span className="font-mono text-sm text-zinc-900">{formatCurrency(selectedQuotation.totalCost)}</span>
+                  </p>
+                  {selectedQuotation.salesMarkup && selectedQuotation.salesMarkup > 0 && (
+                    <p className="text-xs text-emerald-650 font-extrabold flex justify-between items-center">
+                      <span>Sales Markup (+):</span>
+                      <span className="font-mono text-sm text-emerald-700">+{formatCurrency(selectedQuotation.salesMarkup)}</span>
+                    </p>
+                  )}
+                  {selectedQuotation.discountRequested && selectedQuotation.discountRequested > 0 && (
+                    <p className="text-xs text-amber-650 font-extrabold flex justify-between items-center">
+                      <span>Discount (-):</span>
+                      <span className="font-mono text-sm text-amber-700">-{formatCurrency(selectedQuotation.discountRequested)}</span>
+                    </p>
+                  )}
+                  <p className="text-xs text-zinc-800 font-black flex justify-between items-center pt-1.5 border-t border-zinc-200 mt-1.5 text-sm">
+                    <span>Final Net Price:</span>
+                    <span className="font-mono text-emerald-600 text-base">
+                      {formatCurrency(
+                        Math.round(
+                          selectedQuotation.status === 'approved'
+                            ? selectedQuotation.totalCost
+                            : selectedQuotation.totalCost + (selectedQuotation.salesMarkup || 0) - (selectedQuotation.discountRequested || 0)
+                        )
+                      )}
+                    </span>
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -1126,8 +1189,8 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
               </Button>
             )}
             {user?.role === 'admin' && selectedQuotation && (
-              <Button
-                variant="destructive"
+              <Button 
+                variant="destructive" 
                 className="gap-1.5 bg-red-650 hover:bg-red-750 text-white font-bold cursor-pointer"
                 onClick={() => handleSingleDelete(selectedQuotation.id)}
               >
@@ -1147,8 +1210,8 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label>Reason for Rejection</Label>
-              <Input
-                placeholder="e.g. Margin too low, Standard pricing applies"
+              <Input 
+                placeholder="e.g. Margin too low, Standard pricing applies" 
                 value={rejectionReason}
                 onChange={(e) => setRejectionReason(e.target.value)}
               />
@@ -1160,8 +1223,67 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={isApproveDialogOpen} onOpenChange={setIsApproveDialogOpen}>
+        <DialogContent className="max-w-md sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Approve Discount Request</DialogTitle>
+            <DialogDescription>
+              Review the requested discount and adjust the final approved amount if necessary.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-150 text-xs space-y-1">
+              <p className="flex justify-between">
+                <span className="text-zinc-500 font-medium">Base Item Price:</span>
+                <span className="font-mono font-bold text-zinc-900">{formatCurrency(selectedQuotation?.totalCost || 0)}</span>
+              </p>
+              {selectedQuotation?.salesMarkup && selectedQuotation.salesMarkup > 0 && (
+                <p className="flex justify-between">
+                  <span className="text-emerald-600 font-medium">Sales Markup (+):</span>
+                  <span className="font-mono font-bold">+{formatCurrency(selectedQuotation.salesMarkup)}</span>
+                </p>
+              )}
+              <p className="flex justify-between font-bold text-amber-600 border-t pt-1 mt-1">
+                <span>Requested Discount (-):</span>
+                <span className="font-mono">-{formatCurrency(selectedQuotation?.discountRequested || 0)}</span>
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-zinc-650 uppercase tracking-wider">Approved Discount Amount (₹)</Label>
+              <Input 
+                type="number"
+                placeholder="Enter approved discount amount" 
+                value={approvedDiscount}
+                onChange={(e) => setApprovedDiscount(e.target.value)}
+                className="h-10 text-sm font-bold bg-white focus:ring-emerald-500 focus:border-emerald-500"
+              />
+              <p className="text-[10px] text-zinc-400">
+                You can reduce or increase the discount before final approval.
+              </p>
+            </div>
+            {selectedQuotation && (
+              <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl text-xs flex justify-between items-center font-bold text-emerald-800">
+                <span>New Net Payable Price:</span>
+                <span className="font-mono text-sm">
+                  {formatCurrency(
+                    Math.round(
+                      (selectedQuotation.totalCost || 0) + 
+                      (selectedQuotation.salesMarkup || 0) - 
+                      (parseFloat(approvedDiscount) || 0)
+                    )
+                  )}
+                </span>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="h-9 text-xs" onClick={() => setIsApproveDialogOpen(false)}>Cancel</Button>
+            <Button className="h-9 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold" onClick={handleApproveConfirm}>Confirm Approval</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={isConvertDialogOpen} onOpenChange={setIsConvertDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Building2 className="h-5 w-5 text-indigo-600" />
@@ -1197,8 +1319,8 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsConvertDialogOpen(false)}>Cancel</Button>
-            <Button
-              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+            <Button 
+              className="bg-indigo-600 hover:bg-indigo-700 text-white" 
               onClick={confirmConvertToOrder}
               disabled={companies.length === 0 || !selectedCompanyId}
             >
@@ -1210,7 +1332,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
 
       {/* ─── Smart Cut Plan Dialog ─────────────────────────────────────────── */}
       <Dialog open={isSmartCutDialogOpen} onOpenChange={(open) => { if (!open) { setIsSmartCutDialogOpen(false); setSmartCutPlan(null); } }}>
-        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogContent className="max-w-4xl sm:max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold flex items-center gap-2">
               <div className="p-1.5 bg-gradient-to-br from-violet-600 to-indigo-600 rounded-lg">

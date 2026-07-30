@@ -4,7 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
-import { History, Activity, ArrowUp, ArrowDown, ArrowUpDown, FilterX, Download } from 'lucide-react';
+import { History, Activity, ArrowUp, ArrowDown, ArrowUpDown, FilterX, Download, Trash2 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { toast } from 'sonner';
 
 const ColumnHeader = ({ 
   label, 
@@ -96,6 +98,34 @@ const ColumnHeader = ({
 export const ActivityLog = () => {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.length === 0) return;
+    if (!window.confirm(`Are you sure you want to delete ${selectedIds.length} selected activity log(s)?`)) return;
+    
+    setIsDeleting(true);
+    try {
+      const res = await fetch('/api/audit-logs/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds })
+      });
+      if (!res.ok) throw new Error('Failed to delete selected logs');
+      
+      toast.success('Selected logs deleted successfully');
+      setLogs(prev => prev.filter(log => !selectedIds.includes(log.id)));
+      setSelectedIds([]);
+    } catch (err) {
+      toast.error('Failed to delete selected logs');
+      console.error(err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const [filters, setFilters] = useState({
     startDate: '',
@@ -337,6 +367,18 @@ export const ActivityLog = () => {
                 Clear
               </Button>
             )}
+            {isAdmin && selectedIds.length > 0 && (
+              <Button 
+                variant="destructive" 
+                size="sm" 
+                onClick={handleDeleteSelected} 
+                disabled={isDeleting}
+                className="bg-red-600 hover:bg-red-700 text-white font-bold h-9 px-3 gap-1.5"
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete Selected ({selectedIds.length})
+              </Button>
+            )}
             <Button 
               variant="outline" 
               size="sm" 
@@ -354,6 +396,24 @@ export const ActivityLog = () => {
             <Table>
               <TableHeader className="bg-zinc-50/50">
                 <TableRow className="hover:bg-transparent">
+                  {isAdmin && (
+                    <TableHead className="w-12 px-3 py-3 align-top">
+                      <div className="flex flex-col gap-2 pt-1.5">
+                        <input 
+                          type="checkbox" 
+                          checked={sortedLogs.length > 0 && selectedIds.length === sortedLogs.length}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedIds(sortedLogs.map(l => l.id));
+                            } else {
+                              setSelectedIds([]);
+                            }
+                          }}
+                          className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900 cursor-pointer"
+                        />
+                      </div>
+                    </TableHead>
+                  )}
                   <ColumnHeader 
                     label="Timestamp" type="date-range" sortKey="timestampValue" 
                     filters={filters} setFilters={setFilters} sortConfig={sortConfig} handleSort={handleSort} 
@@ -392,19 +452,35 @@ export const ActivityLog = () => {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-24 text-center text-zinc-500">
+                    <TableCell colSpan={isAdmin ? 8 : 7} className="h-24 text-center text-zinc-500">
                       Loading activity logs...
                     </TableCell>
                   </TableRow>
                 ) : sortedLogs.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-24 text-center text-zinc-500">
+                    <TableCell colSpan={isAdmin ? 8 : 7} className="h-24 text-center text-zinc-500">
                       No matching activity found.
                     </TableCell>
                   </TableRow>
                 ) : (
                   sortedLogs.map((log: any) => (
                     <TableRow key={log.id} className="hover:bg-zinc-50/50">
+                      {isAdmin && (
+                        <TableCell className="px-3 py-3 w-12 align-middle">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedIds.includes(log.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedIds(prev => [...prev, log.id]);
+                              } else {
+                                setSelectedIds(prev => prev.filter(id => id !== log.id));
+                              }
+                            }}
+                            className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900 cursor-pointer"
+                          />
+                        </TableCell>
+                      )}
                       <TableCell className="font-mono text-xs text-zinc-500 whitespace-nowrap px-3">
                         {log.parsedTimestamp}
                       </TableCell>

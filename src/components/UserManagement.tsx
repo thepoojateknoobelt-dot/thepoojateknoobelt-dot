@@ -60,6 +60,7 @@ export const UserManagement = () => {
     role: 'sales' as UserRole,
     password: '',
     permission: 'write' as 'read' | 'write',
+    deletionCode: ''
   });
   const [selectedPages, setSelectedPages] = useState<string[]>(['dashboard', 'calculator', 'quotations', 'clients']);
   const [isAdding, setIsAdding] = useState(false);
@@ -72,7 +73,8 @@ export const UserManagement = () => {
     role: 'sales' as UserRole,
     permission: 'write' as 'read' | 'write',
     allowedPages: [] as string[],
-    newPassword: '' // Option to change password
+    newPassword: '', // Option to change password
+    newDeletionCode: '' // Option to change deletion code
   });
   const [showEditPassword, setShowEditPassword] = useState(false);
   const [showCustomRole, setShowCustomRole] = useState(false);
@@ -137,7 +139,8 @@ export const UserManagement = () => {
           role: formData.role,
           password: formData.password,
           permission: formData.permission,
-          allowedPages: selectedPages
+          allowedPages: selectedPages,
+          deletionCode: formData.deletionCode
         })
       });
 
@@ -149,7 +152,7 @@ export const UserManagement = () => {
       }
 
       toast.success('User created successfully');
-      setFormData({ username: '', name: '', role: 'sales', password: '', permission: 'write' });
+      setFormData({ username: '', name: '', role: 'sales', password: '', permission: 'write', deletionCode: '' });
       setSelectedPages(['dashboard', 'calculator', 'quotations', 'clients']);
       setShowCustomRole(false);
       fetchUsers();
@@ -175,6 +178,11 @@ export const UserManagement = () => {
       // Include new password if provided
       if (editFormData.newPassword.trim() !== '') {
         payload.password = editFormData.newPassword.trim();
+      }
+
+      // Include new deletion security code if role is admin and provided
+      if (editFormData.role === 'admin' && editFormData.newDeletionCode.trim() !== '') {
+        payload.deletionCode = editFormData.newDeletionCode.trim();
       }
 
       const res = await fetch(`/api/users/${editingUser.id}`, {
@@ -206,7 +214,8 @@ export const UserManagement = () => {
       role: u.role,
       permission: u.permission || 'write',
       allowedPages: u.allowedPages || [],
-      newPassword: ''
+      newPassword: '',
+      newDeletionCode: ''
     });
     setShowEditPassword(false);
     const isDefaultRole = ['sales', 'production', 'admin'].includes(u.role);
@@ -441,6 +450,22 @@ export const UserManagement = () => {
                   </button>
                 </div>
               </div>
+
+              {formData.role === 'admin' && (
+                <div className="space-y-1.5 pt-2 border-t border-zinc-100 animate-in fade-in duration-200">
+                  <Label className="text-xs font-bold text-zinc-700">Deletion Security Code (Optional)</Label>
+                  <div className="relative">
+                    <Input 
+                      type={showPassword ? "text" : "password"} 
+                      value={formData.deletionCode || ''} 
+                      onChange={(e) => setFormData({ ...formData, deletionCode: e.target.value })}
+                      placeholder="Set secondary password for deletions"
+                      className="bg-zinc-50/50 border-zinc-300 focus:bg-white text-xs h-9 font-medium pr-10 font-mono"
+                    />
+                  </div>
+                  <span className="text-[9px] text-zinc-400 block pl-0.5">Used as a double-security lock when deleting configuration items.</span>
+                </div>
+              )}
 
               <Button 
                 type="submit" 
@@ -750,6 +775,25 @@ export const UserManagement = () => {
                   </div>
                   <span className="text-[9px] text-zinc-400 block pl-0.5">Leave blank to keep current password unchanged.</span>
                 </div>
+
+                {editFormData.role === 'admin' && (
+                  <div className="space-y-1.5 pt-2 border-t border-zinc-100">
+                    <Label className="text-xs font-bold text-zinc-700 flex items-center gap-1.5">
+                      <Lock className="h-3.5 w-3.5 text-zinc-400" />
+                      Reset Deletion Security Code (Optional)
+                    </Label>
+                    <div className="relative">
+                      <Input 
+                        type={showEditPassword ? "text" : "password"} 
+                        placeholder="Enter new deletion code to overwrite"
+                        value={editFormData.newDeletionCode}
+                        onChange={(e) => setEditFormData({ ...editFormData, newDeletionCode: e.target.value })}
+                        className="text-xs h-9 pr-10 font-mono"
+                      />
+                    </div>
+                    <span className="text-[9px] text-zinc-400 block pl-0.5">Leave blank to keep current deletion code unchanged.</span>
+                  </div>
+                )}
               </div>
               
               <DialogFooter className="bg-zinc-50 p-4 border-t border-zinc-100 flex gap-2 justify-end">

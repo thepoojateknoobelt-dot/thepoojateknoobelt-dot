@@ -140,10 +140,19 @@ export const calculateCosting = (data: any, config: any, clientProfitRanges: Pro
     subtotal += holesCost;
   }
 
-  const purchaseGstAmount = Math.round(subtotal * (constants.purchaseGst / 100));
+  const selectedCategory = config?.beltTypes?.find?.((t: any) => t.name === data.beltType) || null;
+  
+  // Single GST rate: category-level overrides global constants
+  const categoryGst = selectedCategory?.gst !== undefined && selectedCategory.gst !== null
+    ? Number(selectedCategory.gst)
+    : null;
+
+  const applicablePurchaseGst = categoryGst !== null ? categoryGst : constants.purchaseGst;
+  const applicableSaleGst     = categoryGst !== null ? categoryGst : constants.saleGst;
+
+  const purchaseGstAmount = Math.round(subtotal * (applicablePurchaseGst / 100));
   const totalWithPurchaseGst = Math.round(subtotal + purchaseGstAmount);
   
-  const selectedCategory = config?.beltTypes?.find?.((t: any) => t.name === data.beltType) || null;
   const applicableFixCost = selectedCategory?.fixCost !== undefined ? selectedCategory.fixCost : constants.fixCost;
   
   const fixCostAmount = Math.round(totalWithPurchaseGst * (applicableFixCost / 100));
@@ -163,7 +172,7 @@ export const calculateCosting = (data: any, config: any, clientProfitRanges: Pro
   const profitAmount = Math.round(totalWithFixCost * (profitMargin / 100));
   const totalWithProfit = Math.round(totalWithFixCost + profitAmount);
   
-  const saleGstAmount = Math.round(totalWithProfit * (constants.saleGst / 100));
+  const saleGstAmount = Math.round(totalWithProfit * (applicableSaleGst / 100));
   const finalTotal = Math.round(totalWithProfit + saleGstAmount + packingCost);
 
   return {
@@ -171,6 +180,7 @@ export const calculateCosting = (data: any, config: any, clientProfitRanges: Pro
     summary: {
       subtotal,
       purchaseGst: purchaseGstAmount,
+      purchaseGstPercent: applicablePurchaseGst,
       totalWithPurchaseGst,
       fixCost: fixCostAmount,
       fixCostPercentage: applicableFixCost,
@@ -179,6 +189,8 @@ export const calculateCosting = (data: any, config: any, clientProfitRanges: Pro
       profitMarginUsed: profitMargin,
       totalWithProfit,
       saleGst: saleGstAmount,
+      saleGstPercent: applicableSaleGst,
+      gstPercent: categoryGst !== null ? categoryGst : null, // applied category GST or null if global
       packingCost,
       finalTotal,
       hasHoles,

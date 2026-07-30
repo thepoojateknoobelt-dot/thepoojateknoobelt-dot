@@ -188,11 +188,66 @@ const RollVisualizer: React.FC<RollVisualizerProps> = ({
     }
   };
 
-  const lengthMarkers = Array.from({ length: Math.floor(roll.fullLength / 5) + 1 }, (_, i) => i * 5);
-  // Width markers: show every 1m tick, but only label every 1m (clean spacing at SCALE=35)
-  const widthTicks = Array.from({ length: Math.floor(roll.fullWidth * 2) + 1 }, (_, i) => i * 0.5);
-  // Only label every 1m to avoid overlap
-  const widthLabels = Array.from({ length: Math.floor(roll.fullWidth) + 1 }, (_, i) => i);
+  // Determine tick steps in the display unit
+  let minorStepUnit = 0.1;
+  let majorStepUnit = 1.0;
+  
+  if (unit === 'cm') {
+    minorStepUnit = 10;
+    majorStepUnit = 100;
+  } else if (unit === 'mm') {
+    minorStepUnit = 100;
+    majorStepUnit = 1000;
+  } else if (unit === 'ft') {
+    minorStepUnit = 0.5;
+    majorStepUnit = 2.0;
+  } else if (unit === 'in') {
+    minorStepUnit = 6;
+    majorStepUnit = 12;
+  }
+
+  // Adjust major step based on total length in display units
+  const totalDisplayLength = roll.fullLength * conv;
+  if (totalDisplayLength <= 3) {
+    majorStepUnit = minorStepUnit * 5; // e.g. 0.5m instead of 1m
+  } else if (totalDisplayLength > 30) {
+    majorStepUnit = majorStepUnit * 5; // e.g. 5m instead of 1m
+  }
+
+  const maxDisplayVal = Math.floor(totalDisplayLength / minorStepUnit) * minorStepUnit;
+  const minorTicks = Array.from(
+    { length: Math.round(maxDisplayVal / minorStepUnit) + 1 },
+    (_, i) => Math.round(i * minorStepUnit * 1000) / 1000
+  );
+
+  // Y-axis steps
+  let minorStepUnitY = 0.1;
+  let majorStepUnitY = 1.0;
+  
+  if (unit === 'cm') {
+    minorStepUnitY = 10;
+    majorStepUnitY = 100;
+  } else if (unit === 'mm') {
+    minorStepUnitY = 100;
+    majorStepUnitY = 1000;
+  } else if (unit === 'ft') {
+    minorStepUnitY = 0.5;
+    majorStepUnitY = 1.0;
+  } else if (unit === 'in') {
+    minorStepUnitY = 6;
+    majorStepUnitY = 12;
+  }
+
+  const totalDisplayWidth = roll.fullWidth * conv;
+  if (totalDisplayWidth <= 3) {
+    majorStepUnitY = minorStepUnitY * 5; // e.g. 0.5m
+  }
+
+  const maxDisplayValY = Math.floor(totalDisplayWidth / minorStepUnitY) * minorStepUnitY;
+  const minorTicksY = Array.from(
+    { length: Math.round(maxDisplayValY / minorStepUnitY) + 1 },
+    (_, i) => Math.round(i * minorStepUnitY * 1000) / 1000
+  );
 
   const formatVal = (m: number) => {
     const val = m * conv;
@@ -281,12 +336,12 @@ const RollVisualizer: React.FC<RollVisualizerProps> = ({
         onClick={handleClick}
         onMouseLeave={() => { setMousePos(null); setIsValidPos(false); }}
       >
-        <div style={{ width: (viewWidth + RULER_SIZE) * zoom, height: (viewHeight + RULER_SIZE + 40) * zoom, position: 'relative' }}>
+        <div style={{ width: (viewWidth + RULER_SIZE + 45) * zoom, height: (viewHeight + RULER_SIZE + 40) * zoom, position: 'relative' }}>
           <svg 
             ref={svgRef}
-            width={(viewWidth + RULER_SIZE) * zoom} 
+            width={(viewWidth + RULER_SIZE + 45) * zoom} 
             height={(viewHeight + RULER_SIZE + 40) * zoom} 
-            viewBox={`0 0 ${viewWidth + RULER_SIZE} ${viewHeight + RULER_SIZE + 40}`}
+            viewBox={`0 0 ${viewWidth + RULER_SIZE + 45} ${viewHeight + RULER_SIZE + 40}`}
             className="absolute top-0 left-0 roll-layout-svg"
           >
             <defs>
@@ -302,37 +357,87 @@ const RollVisualizer: React.FC<RollVisualizerProps> = ({
             </defs>
             <g transform={`translate(${RULER_SIZE}, 0)`}>
               <rect width={viewWidth} height={RULER_SIZE} fill="#f8fafc" stroke="#e2e8f0" />
-              {lengthMarkers.map(m => (
-                <g key={`l-${m}`} transform={`translate(${m * SCALE}, 0)`}>
-                  <line y1="28" y2="40" stroke="#cbd5e1" strokeWidth="2" />
-                  <text x="4" y="20" fontSize="10" fill="#64748b" fontWeight="900">{formatVal(m)}{unit}</text>
+              {minorTicks.map(t => {
+                const isMajor = Math.abs(t % majorStepUnit) < 0.01 || Math.abs((t % majorStepUnit) - majorStepUnit) < 0.01;
+                const isMedium = !isMajor && (Math.abs(t % (majorStepUnit / 2)) < 0.01 || Math.abs((t % (majorStepUnit / 2)) - (majorStepUnit / 2)) < 0.01);
+                
+                let tickHeight = 6;
+                if (isMajor) tickHeight = 15;
+                else if (isMedium) tickHeight = 10;
+                
+                const xPos = (t / conv) * SCALE;
+                return (
+                  <g key={`t-${t}`} transform={`translate(${xPos}, 0)`}>
+                    <line y1={RULER_SIZE - tickHeight} y2={RULER_SIZE} stroke="#cbd5e1" strokeWidth={isMajor ? 1.5 : 1} />
+                    {isMajor && (() => {
+                      const isLast = xPos + 30 > viewWidth && t > 0;
+                      return (
+                        <text
+                          x={isLast ? -4 : 4}
+                          y="20"
+                          fontSize="9.5"
+                          fill="#64748b"
+                          fontWeight="900"
+                          textAnchor={isLast ? "end" : "start"}
+                        >
+                          {formatVal(t / conv)}{unit}
+                        </text>
+                      );
+                    })()}
+                  </g>
+                );
+              })}
+              {/* Live hover position line and label on the ruler */}
+              {mousePos && (
+                <g transform={`translate(${mousePos.x * SCALE}, 0)`} style={{ pointerEvents: 'none' }}>
+                  <line y1="0" y2={RULER_SIZE} stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="3,3" />
+                  <rect x="-24" y="2" width="48" height="13" rx="3" fill="#3b82f6" />
+                  <text x="0" y="11" fontSize="8" fill="white" fontWeight="black" textAnchor="middle">
+                    {formatVal(mousePos.x)}{unit}
+                  </text>
                 </g>
-              ))}
+              )}
             </g>
 
             <g transform={`translate(0, ${RULER_SIZE})`}>
               <rect width={RULER_SIZE} height={viewHeight} fill="#f8fafc" stroke="#e2e8f0" />
-              {/* Minor ticks every 0.5m */}
-              {widthTicks.map(m => (
-                <g key={`wt-${m}`} transform={`translate(0, ${m * SCALE})`}>
-                  <line x1={Number.isInteger(m) ? 38 : 44} x2={RULER_SIZE} stroke="#cbd5e1" strokeWidth={Number.isInteger(m) ? 2 : 1} />
-                </g>
-              ))}
-              {/* Labels only every 1m, horizontal, right-aligned */}
-              {widthLabels.map(m => (
-                <g key={`wl-${m}`} transform={`translate(0, ${m * SCALE})`}>
-                  <text
-                    x={RULER_SIZE - 6}
-                    y={m === 0 ? 11 : 5}
-                    fontSize="9"
-                    fill="#64748b"
-                    fontWeight="700"
-                    textAnchor="end"
-                  >
-                    {formatVal(m)}{unit}
+              {minorTicksY.map(t => {
+                const isMajor = Math.abs(t % majorStepUnitY) < 0.01 || Math.abs((t % majorStepUnitY) - majorStepUnitY) < 0.01;
+                const isMedium = !isMajor && (Math.abs(t % (majorStepUnitY / 2)) < 0.01 || Math.abs((t % (majorStepUnitY / 2)) - (majorStepUnitY / 2)) < 0.01);
+                
+                let tickWidth = 6;
+                if (isMajor) tickWidth = 15;
+                else if (isMedium) tickWidth = 10;
+                
+                const yPos = (t / conv) * SCALE;
+                return (
+                  <g key={`wt-${t}`} transform={`translate(0, ${yPos})`}>
+                    <line x1={RULER_SIZE - tickWidth} x2={RULER_SIZE} stroke="#cbd5e1" strokeWidth={isMajor ? 1.5 : 1} />
+                    {isMajor && (
+                      <text
+                        x={RULER_SIZE - 6}
+                        y={t === 0 ? 11 : 5}
+                        fontSize="9"
+                        fill="#64748b"
+                        fontWeight="700"
+                        textAnchor="end"
+                      >
+                        {formatVal(t / conv)}{unit}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+              {/* Live hover position line and label on the Y-axis ruler */}
+              {mousePos && (
+                <g transform={`translate(0, ${mousePos.y * SCALE})`} style={{ pointerEvents: 'none' }}>
+                  <line x1="0" x2={RULER_SIZE} y1="0" y2="0" stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="3,3" />
+                  <rect x="2" y="-8" width="40" height="13" rx="3" fill="#3b82f6" />
+                  <text x="22" y="1.5" fontSize="8" fill="white" fontWeight="black" textAnchor="middle">
+                    {formatVal(mousePos.y)}{unit}
                   </text>
                 </g>
-              ))}
+              )}
             </g>
 
             <g transform={`translate(${RULER_SIZE}, ${RULER_SIZE})`}>
@@ -442,20 +547,74 @@ const RollVisualizer: React.FC<RollVisualizerProps> = ({
                 </g>
               ))}
 
+              {/* Manual mode live guidelines */}
+              {manualMode && mousePos && (
+                <g style={{ pointerEvents: 'none' }}>
+                  {/* Vertical coordinate line */}
+                  <line
+                    x1={mousePos.x * SCALE}
+                    y1={0}
+                    x2={mousePos.x * SCALE}
+                    y2={viewHeight}
+                    stroke="rgba(59, 130, 246, 0.4)"
+                    strokeWidth="1"
+                    strokeDasharray="4,4"
+                  />
+                  {/* Horizontal coordinate line */}
+                  <line
+                    x1={0}
+                    y1={mousePos.y * SCALE}
+                    x2={viewWidth}
+                    y2={mousePos.y * SCALE}
+                    stroke="rgba(59, 130, 246, 0.4)"
+                    strokeWidth="1"
+                    strokeDasharray="4,4"
+                  />
+                </g>
+              )}
+
               {/* Manual mode live ghost preview */}
               {manualMode && mousePos && manualDimensions && (
-                <rect
-                  x={mousePos.x * SCALE}
-                  y={mousePos.y * SCALE}
-                  width={manualDimensions.length * SCALE}
-                  height={manualDimensions.width * SCALE}
-                  fill={isValidPos ? 'url(#suggested-pattern-manual)' : 'url(#suggested-pattern-invalid)'}
-                  stroke={isValidPos ? '#3b82f6' : '#ef4444'}
-                  strokeWidth="3"
-                  strokeDasharray="8,4"
-                  rx="4"
-                  style={{ pointerEvents: 'none' }}
-                />
+                <g style={{ pointerEvents: 'none' }}>
+                  <rect
+                    x={mousePos.x * SCALE}
+                    y={mousePos.y * SCALE}
+                    width={manualDimensions.length * SCALE}
+                    height={manualDimensions.width * SCALE}
+                    fill={isValidPos ? 'url(#suggested-pattern-manual)' : 'url(#suggested-pattern-invalid)'}
+                    stroke={isValidPos ? '#3b82f6' : '#ef4444'}
+                    strokeWidth="3"
+                    strokeDasharray="8,4"
+                    rx="4"
+                  />
+                  {/* Display dimensions/coords on the ghost preview */}
+                  <rect
+                    x={mousePos.x * SCALE + 6}
+                    y={mousePos.y * SCALE + 6}
+                    width="100"
+                    height="28"
+                    rx="4"
+                    fill="rgba(15, 23, 42, 0.85)"
+                  />
+                  <text
+                    x={mousePos.x * SCALE + 12}
+                    y={mousePos.y * SCALE + 18}
+                    fontSize="8.5"
+                    fontWeight="black"
+                    fill="#60a5fa"
+                  >
+                    Pos: {formatVal(mousePos.x)}{unit}, {formatVal(mousePos.y)}{unit}
+                  </text>
+                  <text
+                    x={mousePos.x * SCALE + 12}
+                    y={mousePos.y * SCALE + 28}
+                    fontSize="7.5"
+                    fontWeight="bold"
+                    fill="white"
+                  >
+                    Size: {formatVal(manualDimensions.length)}{unit} × {formatVal(manualDimensions.width)}{unit}
+                  </text>
+                </g>
               )}
 
               {suggestedPlacement && (

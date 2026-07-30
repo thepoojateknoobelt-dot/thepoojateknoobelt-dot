@@ -12,7 +12,8 @@ import {
   LogOut,
   Factory,
   X,
-  ArrowLeft
+  ArrowLeft,
+  Archive
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
@@ -39,6 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
     { id: 'activity', label: 'Activity Log', icon: History, roles: ['admin'] },
     { id: 'users', label: 'Users', icon: Users, roles: ['admin'] },
     { id: 'config', label: 'Configuration', icon: Settings, roles: ['admin'] },
+    { id: 'data_directory', label: 'Data Directory', icon: Archive, roles: ['admin'] },
   ];
 
   return (

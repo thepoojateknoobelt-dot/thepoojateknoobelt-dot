@@ -46,7 +46,8 @@ async function initializeDatabase() {
         name VARCHAR(255) DEFAULT 'User' NOT NULL,
         role VARCHAR(50) DEFAULT 'admin' NOT NULL,
         password VARCHAR(255) NOT NULL,
-        username_lower VARCHAR(255) DEFAULT '' NOT NULL
+        username_lower VARCHAR(255) DEFAULT '' NOT NULL,
+        deletion_code VARCHAR(255) DEFAULT ''
       )
     `);
 
@@ -54,6 +55,12 @@ async function initializeDatabase() {
       await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permission VARCHAR(50) DEFAULT 'write' NOT NULL`);
     } catch (alterErr) {
       console.warn('Failed to add permission column to users table:', alterErr);
+    }
+
+    try {
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_code VARCHAR(255) DEFAULT ''`);
+    } catch (alterErr) {
+      console.warn('Failed to add deletion_code column to users table:', alterErr);
     }
 
     try {
@@ -87,6 +94,31 @@ async function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS system_config (
         id VARCHAR(50) PRIMARY KEY,
         data JSONB NOT NULL
+      )
+    `);
+
+    // Create Deleted Configs history table for recycle bin / Data Directory
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS deleted_configs (
+        id VARCHAR(255) PRIMARY KEY,
+        type VARCHAR(50) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        parent_path VARCHAR(255) DEFAULT '',
+        data JSONB NOT NULL,
+        deleted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Create Rate History table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS rate_history (
+        id SERIAL PRIMARY KEY,
+        item_id VARCHAR(255) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        old_rate NUMERIC NOT NULL,
+        new_rate NUMERIC NOT NULL,
+        changed_by VARCHAR(255) NOT NULL,
+        changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
@@ -126,12 +158,11 @@ async function initializeDatabase() {
     } catch (alterErr) {
       console.warn('Failed to add company column to quotations table:', alterErr);
     }
-
-    // Ensure belt_style, selected_bom_options and items columns exist on quotations table
     try {
       await pool.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS belt_style VARCHAR(255)`);
       await pool.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS selected_bom_options JSONB DEFAULT '{}'::jsonb`);
       await pool.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS items JSONB DEFAULT '[]'::jsonb`);
+      await pool.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS sales_markup NUMERIC DEFAULT 0`);
     } catch (alterErr) {
       console.warn('Failed to add columns to quotations table:', alterErr);
     }
@@ -176,6 +207,20 @@ async function initializeDatabase() {
       await pool.query(`ALTER TABLE material_stocks ADD COLUMN IF NOT EXISTS lots JSONB`);
     } catch (alterErr) {
       console.warn('Failed to add lots column:', alterErr);
+    }
+
+    // Add lot_number column to material_requests if it doesn't exist yet
+    try {
+      await pool.query(`ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS lot_number VARCHAR(255)`);
+    } catch (alterErr) {
+      console.warn('Failed to add lot_number column to material_requests:', alterErr);
+    }
+
+    // Add lot_number column to material_issues if it doesn't exist yet
+    try {
+      await pool.query(`ALTER TABLE material_issues ADD COLUMN IF NOT EXISTS lot_number VARCHAR(255)`);
+    } catch (alterErr) {
+      console.warn('Failed to add lot_number column to material_issues:', alterErr);
     }
 
     // Seed default material stocks if empty
@@ -321,6 +366,79 @@ async function initializeDatabase() {
       }
     } catch (typeErr) {
       console.warn('Failed to initialize custom_material_types table:', typeErr);
+    }
+
+    // Create Ready Belt Stocks table
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ready_belt_stocks (
+          id VARCHAR(255) PRIMARY KEY,
+          category VARCHAR(255) NOT NULL,
+          belt_stock VARCHAR(255) NOT NULL,
+          size VARCHAR(255) NOT NULL,
+          opening_pisc INT DEFAULT 0,
+          recv_pisc INT DEFAULT 0,
+          issues_pisc INT DEFAULT 0,
+          closing_pisc INT DEFAULT 0,
+          so_no VARCHAR(255),
+          receiver_name VARCHAR(255)
+        )
+      `);
+
+      const readyStockCheck = await pool.query('SELECT COUNT(*) FROM ready_belt_stocks');
+      if (parseInt(readyStockCheck.rows[0].count, 10) === 0) {
+        const seedData = [
+          // BROWN BELT
+          { category: 'BROWN BELT', belt_stock: 'SIALI BELT', size: '97" X 63"', opening_pisc: 0, recv_pisc: 0, issues_pisc: 0, closing_pisc: 0, so_no: '', receiver_name: '' },
+          { category: 'BROWN BELT', belt_stock: 'WITHOUT SILAI', size: '2.20M X 63"', opening_pisc: 1, recv_pisc: 0, issues_pisc: 0, closing_pisc: 1, so_no: '', receiver_name: '' },
+          { category: 'BROWN BELT', belt_stock: 'CROSS JOINT', size: '97" X 63"', opening_pisc: 0, recv_pisc: 0, issues_pisc: 0, closing_pisc: 0, so_no: '', receiver_name: '' },
+          { category: 'BROWN BELT', belt_stock: 'WITHOUT SILAI', size: '2.12M X 63"', opening_pisc: 1, recv_pisc: 0, issues_pisc: 0, closing_pisc: 1, so_no: '', receiver_name: '' },
+          { category: 'BROWN BELT', belt_stock: 'WITHOUT SILAI', size: '97" X 59"', opening_pisc: 1, recv_pisc: 0, issues_pisc: 0, closing_pisc: 1, so_no: '', receiver_name: '' },
+          // BLACK BELT
+          { category: 'BLACK BELT', belt_stock: 'SILAI BELT', size: '97" X 63"', opening_pisc: 7, recv_pisc: 0, issues_pisc: 3, closing_pisc: 4, so_no: '11673 11728', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '97" X 63"', opening_pisc: 3, recv_pisc: 0, issues_pisc: 1, closing_pisc: 2, so_no: '11574', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'CROSS JOINT', size: '97" X 63"', opening_pisc: 3, recv_pisc: 0, issues_pisc: 0, closing_pisc: 3, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '2.65 M X 63"', opening_pisc: 2, recv_pisc: 0, issues_pisc: 0, closing_pisc: 2, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'SILAI BELT', size: '85" X 63"', opening_pisc: 1, recv_pisc: 0, issues_pisc: 0, closing_pisc: 1, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '2.77M X 63"', opening_pisc: 0, recv_pisc: 0, issues_pisc: 0, closing_pisc: 0, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '2.78M X 63"', opening_pisc: 4, recv_pisc: 0, issues_pisc: 0, closing_pisc: 4, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '3.03M X 63"', opening_pisc: 3, recv_pisc: 0, issues_pisc: 0, closing_pisc: 3, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '2.91M X 63"', opening_pisc: 6, recv_pisc: 0, issues_pisc: 0, closing_pisc: 6, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '85" X 63"', opening_pisc: 2, recv_pisc: 0, issues_pisc: 0, closing_pisc: 2, so_no: '', receiver_name: '' },
+          { category: 'BLACK BELT', belt_stock: 'WITHOUT SILAI', size: '3.14M X 63INCH', opening_pisc: 0, recv_pisc: 0, issues_pisc: 0, closing_pisc: 0, so_no: '', receiver_name: '' }
+        ];
+
+        for (let idx = 0; idx < seedData.length; idx++) {
+          const item = seedData[idx];
+          const id = `ready-${Date.now()}-${idx}`;
+          await pool.query(
+            `INSERT INTO ready_belt_stocks 
+             (id, category, belt_stock, size, opening_pisc, recv_pisc, issues_pisc, closing_pisc, so_no, receiver_name) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [id, item.category, item.belt_stock, item.size, item.opening_pisc, item.recv_pisc, item.issues_pisc, item.closing_pisc, item.so_no, item.receiver_name]
+          );
+        }
+        console.log('Seeded ready_belt_stocks data successfully.');
+      }
+
+      // Ensure details_log column exists and migrate existing rows
+      try {
+        await pool.query(`ALTER TABLE ready_belt_stocks ADD COLUMN IF NOT EXISTS details_log JSONB`);
+        const migrationRes = await pool.query(`
+          UPDATE ready_belt_stocks 
+          SET 
+            opening_pisc = opening_pisc + recv_pisc,
+            details_log = '[]'::jsonb
+          WHERE details_log IS NULL
+        `);
+        if (migrationRes.rowCount > 0) {
+          console.log(`Migrated ${migrationRes.rowCount} ready_belt_stocks rows to new schema (opening = opening + recv).`);
+        }
+      } catch (alterErr) {
+        console.warn('Failed to add details_log column or migrate ready_belt_stocks table:', alterErr);
+      }
+    } catch (rbCheckErr) {
+      console.warn('Failed to create ready_belt_stocks table:', rbCheckErr);
     }
 
     // Create HRMS Departments table
@@ -942,10 +1060,24 @@ const calculateCosting = (data: any, config: any, clientProfitRanges: any[] = []
   subtotal += packingCost;
   breakdown['packing'] = { consumption: 1, rate: manualPackingCost || rates.packing, cost: packingCost };
 
-  const purchaseGstAmount = Math.round(subtotal * (constants.purchaseGst / 100));
+  const selectedCategory = config?.beltTypes?.find?.((t: any) => t.name === data.beltType) || null;
+  
+  // Single GST rate: category-level gst overrides global constants
+  const categoryGst = selectedCategory?.gst !== undefined && selectedCategory.gst !== null
+    ? Number(selectedCategory.gst)
+    : null;
+
+  const applicablePurchaseGst = categoryGst !== null ? categoryGst : constants.purchaseGst;
+  const applicableSaleGst     = categoryGst !== null ? categoryGst : constants.saleGst;
+
+  const applicableFixCost = selectedCategory?.fixCost !== undefined && selectedCategory.fixCost !== null
+    ? Number(selectedCategory.fixCost)
+    : constants.fixCost;
+
+  const purchaseGstAmount = Math.round(subtotal * (applicablePurchaseGst / 100));
   const totalWithPurchaseGst = Math.round(subtotal + purchaseGstAmount);
   
-  const fixCostAmount = Math.round(totalWithPurchaseGst * (constants.fixCost / 100));
+  const fixCostAmount = Math.round(totalWithPurchaseGst * (applicableFixCost / 100));
   const totalWithFixCost = Math.round(totalWithPurchaseGst + fixCostAmount);
   
   // Resolve profit margin based on length ranges
@@ -963,7 +1095,7 @@ const calculateCosting = (data: any, config: any, clientProfitRanges: any[] = []
   const profitAmount = Math.round(totalWithFixCost * (profitMargin / 100));
   const totalWithProfit = Math.round(totalWithFixCost + profitAmount);
 
-  const saleGstAmount = Math.round(totalWithProfit * (constants.saleGst / 100));
+  const saleGstAmount = Math.round(totalWithProfit * (applicableSaleGst / 100));
   const finalTotal = Math.round(totalWithProfit + saleGstAmount);
 
   return {
@@ -971,13 +1103,17 @@ const calculateCosting = (data: any, config: any, clientProfitRanges: any[] = []
     summary: {
       subtotal,
       purchaseGst: purchaseGstAmount,
+      purchaseGstPercent: applicablePurchaseGst,
       totalWithPurchaseGst,
       fixCost: fixCostAmount,
+      fixCostPercentage: applicableFixCost,
       totalWithFixCost,
       profit: profitAmount,
       profitMarginUsed: profitMargin,
       totalWithProfit,
       saleGst: saleGstAmount,
+      saleGstPercent: applicableSaleGst,
+      gstPercent: categoryGst,
       finalTotal
     }
   };
@@ -1083,13 +1219,16 @@ app.post('/api/auth/login', async (req, res) => {
       ? ['dashboard', 'calculator', 'quotations', 'clients', 'reports', 'activity', 'users', 'config', 'production', 'nesting_dashboard', 'nesting_cutting', 'nesting_rolls_map', 'nesting_details', 'nesting_stock', 'nesting_production', 'nesting_scrub']
       : (user.allowed_pages || 'dashboard,calculator,quotations,clients').split(',');
     
+    const hasDel = !!(user.deletion_code && user.deletion_code.trim() !== '');
+
     const token = jwt.sign({ 
       id: user.id, 
       username: user.username, 
       role: user.role, 
       name: user.name, 
       permission: user.permission || 'write',
-      allowedPages: userPages
+      allowedPages: userPages,
+      hasDeletionCode: hasDel
     }, JWT_SECRET);
     res.cookie('token', token, cookieOptions).json({ 
       user: { 
@@ -1098,7 +1237,8 @@ app.post('/api/auth/login', async (req, res) => {
         role: user.role, 
         name: user.name, 
         permission: user.permission || 'write',
-        allowedPages: userPages
+        allowedPages: userPages,
+        hasDeletionCode: hasDel
       } 
     });
   } catch (error) {
@@ -1111,12 +1251,58 @@ app.post('/api/auth/logout', (req, res) => {
   res.clearCookie('token').json({ success: true });
 });
 
-app.get('/api/auth/me', authenticate, (req: any, res) => {
+app.post('/api/auth/verify-deletion-code', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { code } = req.body;
+  
+  try {
+    const result = await pool.query('SELECT deletion_code FROM users WHERE id = $1', [req.user.id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const storedHash = result.rows[0].deletion_code;
+    
+    // If no deletion code is configured for this admin, let it pass
+    if (!storedHash || storedHash.trim() === '') {
+      return res.json({ success: true });
+    }
+    
+    const isMatch = storedHash.startsWith('$2')
+      ? bcrypt.compareSync(code, storedHash)
+      : code === storedHash;
+      
+    if (isMatch) {
+      res.json({ success: true });
+    } else {
+      res.status(400).json({ success: false, error: 'Incorrect deletion security code' });
+    }
+  } catch (err) {
+    console.error('Failed to verify deletion code', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/auth/me', authenticate, async (req: any, res) => {
   const email = req.user.role === 'admin' ? 'admin@ptb.com' : 'account@ptb.com';
-  res.json({ 
-    user: req.user,
-    email: email
-  });
+  try {
+    const result = await pool.query('SELECT deletion_code FROM users WHERE id = $1', [req.user.id]);
+    const deletion_code = result.rows[0]?.deletion_code || '';
+    res.json({ 
+      user: {
+        ...req.user,
+        hasDeletionCode: deletion_code.trim() !== ''
+      },
+      email: email
+    });
+  } catch (err) {
+    res.json({ 
+      user: {
+        ...req.user,
+        hasDeletionCode: false
+      },
+      email: email
+    });
+  }
 });
 
 // Helper to get YYMM format
@@ -1674,14 +1860,261 @@ app.get('/api/settings/config', async (req, res) => {
 app.post('/api/settings/config', authenticate, async (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   try {
+    const newConfig = req.body;
+    
+    // 1. Fetch old config to diff
+    const oldConfigRes = await pool.query('SELECT data FROM system_config WHERE id = $1', ['default']);
+    const oldConfig = oldConfigRes.rows[0]?.data;
+    
+    if (oldConfig && Array.isArray(oldConfig.beltTypes) && Array.isArray(newConfig.beltTypes)) {
+      const oldBelts = oldConfig.beltTypes;
+      const newBelts = newConfig.beltTypes;
+      
+      // Category Deletions Check
+      for (const oldCat of oldBelts) {
+        const isStillPresent = newBelts.some((c: any) => c.id === oldCat.id);
+        if (!isStillPresent) {
+          const logId = `del-cat-${oldCat.id}-${Date.now()}`;
+          await pool.query(
+            `INSERT INTO deleted_configs (id, type, name, parent_path, data) 
+             VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
+            [logId, 'category', oldCat.name, '', JSON.stringify(oldCat)]
+          );
+        } else {
+          // Check for Style Deletions
+          const newCat = newBelts.find((c: any) => c.id === oldCat.id);
+          if (newCat && Array.isArray(oldCat.styles) && Array.isArray(newCat.styles)) {
+            for (const oldStyle of oldCat.styles) {
+              const isStylePresent = newCat.styles.some((s: any) => s.id === oldStyle.id);
+              if (!isStylePresent) {
+                const logId = `del-style-${oldStyle.id}-${Date.now()}`;
+                await pool.query(
+                  `INSERT INTO deleted_configs (id, type, name, parent_path, data) 
+                   VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
+                  [logId, 'style', oldStyle.name, oldCat.name, JSON.stringify({ style: oldStyle, parentCategoryId: oldCat.id })]
+                );
+              } else {
+                // Check for BOM Component Deletions & Rate Changes
+                const newStyle = newCat.styles.find((s: any) => s.id === oldStyle.id);
+                if (newStyle && Array.isArray(oldStyle.bom) && Array.isArray(newStyle.bom)) {
+                  for (const oldBOM of oldStyle.bom) {
+                    const isBOMPresent = newStyle.bom.some((b: any) => b.id === oldBOM.id);
+                    if (!isBOMPresent) {
+                      const logId = `del-bom-${oldBOM.id}-${Date.now()}`;
+                      await pool.query(
+                        `INSERT INTO deleted_configs (id, type, name, parent_path, data) 
+                         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
+                        [logId, 'bom', oldBOM.name, `${oldCat.name} › ${oldStyle.name}`, JSON.stringify({ bomItem: oldBOM, parentCategoryId: oldCat.id, parentStyleId: oldStyle.id })]
+                      );
+                    } else {
+                      // BOM component is still present -> check for rate changes & sub-category option deletions!
+                      const newBOM = newStyle.bom.find((b: any) => b.id === oldBOM.id);
+                      if (newBOM) {
+                        const changerName = req.user.name || req.user.username || 'Admin';
+                        const oldHasOptions = Array.isArray(oldBOM.options) && oldBOM.options.length > 0;
+                        const newHasOptions = Array.isArray(newBOM.options) && newBOM.options.length > 0;
+                        
+                        // Check for deleted sub-category options!
+                        if (oldHasOptions) {
+                          const newOpts = Array.isArray(newBOM.options) ? newBOM.options : [];
+                          for (const oldOpt of oldBOM.options) {
+                            const isOptStillPresent = newOpts.some((o: any) => o.name === oldOpt.name);
+                            if (!isOptStillPresent) {
+                              const logId = `del-opt-${oldBOM.id}-${oldOpt.name}-${Date.now()}`;
+                              await pool.query(
+                                `INSERT INTO deleted_configs (id, type, name, parent_path, data) 
+                                 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
+                                [logId, 'subcategory', oldOpt.name, `${oldCat.name} › ${oldStyle.name} › ${oldBOM.name}`, JSON.stringify({ option: oldOpt, parentCategoryId: oldCat.id, parentStyleId: oldStyle.id, parentBOMId: oldBOM.id })]
+                              );
+                            }
+                          }
+                        }
+
+                        // Main rate change (when no options exist)
+                        if (!oldHasOptions && !newHasOptions && oldBOM.rate !== newBOM.rate) {
+                          await pool.query(
+                            `INSERT INTO rate_history (item_id, name, old_rate, new_rate, changed_by) 
+                             VALUES ($1, $2, $3, $4, $5)`,
+                            [oldBOM.id, oldBOM.name, oldBOM.rate, newBOM.rate, changerName]
+                          );
+                        }
+                        
+                        // Option rate change (when options exist)
+                        if (oldHasOptions && newHasOptions) {
+                          for (const oldOpt of oldBOM.options) {
+                            const newOpt = newBOM.options.find((o: any) => o.name === oldOpt.name);
+                            if (newOpt && oldOpt.rate !== newOpt.rate) {
+                              const itemId = `${oldBOM.id}::${oldOpt.name}`;
+                              await pool.query(
+                                `INSERT INTO rate_history (item_id, name, old_rate, new_rate, changed_by) 
+                                 VALUES ($1, $2, $3, $4, $5)`,
+                                [itemId, oldOpt.name, oldOpt.rate, newOpt.rate, changerName]
+                              );
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Save the new config
     await pool.query(
       'INSERT INTO system_config (id, data) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data',
-      ['default', JSON.stringify(req.body)]
+      ['default', JSON.stringify(newConfig)]
     );
     res.json({ success: true });
   } catch (err) {
     console.error('Failed to write config', err);
     res.status(500).json({ error: 'Failed to write config' });
+  }
+});
+
+// Config Recovery History (Data Directory / Recycle Bin) Routes
+app.get('/api/settings/config/rate-history', authenticate, async (req: any, res) => {
+  const { itemId } = req.query;
+  if (!itemId) return res.status(400).json({ error: 'itemId is required' });
+  try {
+    const result = await pool.query(
+      'SELECT old_rate, new_rate, changed_by, changed_at FROM rate_history WHERE item_id = $1 ORDER BY changed_at DESC LIMIT 5',
+      [itemId]
+    );
+    res.json(result.rows.map(r => ({
+      oldRate: parseFloat(r.old_rate),
+      newRate: parseFloat(r.new_rate),
+      changedBy: r.changed_by,
+      changedAt: r.changed_at
+    })));
+  } catch (err) {
+    console.error('Failed to fetch rate history', err);
+    res.status(500).json({ error: 'Failed to retrieve rate history' });
+  }
+});
+
+app.get('/api/settings/config/deleted', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const result = await pool.query('SELECT * FROM deleted_configs ORDER BY deleted_at DESC');
+    res.json(result.rows.map(r => ({
+      id: r.id,
+      type: r.type,
+      name: r.name,
+      parentPath: r.parent_path,
+      deletedAt: r.deleted_at
+    })));
+  } catch (err) {
+    console.error('Failed to fetch deleted configs', err);
+    res.status(500).json({ error: 'Failed to retrieve deleted configurations history' });
+  }
+});
+
+app.post('/api/settings/config/restore/:id', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const { id } = req.params;
+    // 1. Fetch deleted config from DB
+    const delRes = await pool.query('SELECT * FROM deleted_configs WHERE id = $1', [id]);
+    if (delRes.rowCount === 0) return res.status(404).json({ error: 'Deleted item not found' });
+    const delItem = delRes.rows[0];
+    const data = typeof delItem.data === 'string' ? JSON.parse(delItem.data) : delItem.data;
+
+    // 2. Fetch current config
+    const configRes = await pool.query('SELECT data FROM system_config WHERE id = $1', ['default']);
+    if (configRes.rowCount === 0) return res.status(500).json({ error: 'Current system config not found' });
+    const config = configRes.rows[0].data;
+
+    if (!Array.isArray(config.beltTypes)) {
+      config.beltTypes = [];
+    }
+
+    // 3. Restore based on type
+    if (delItem.type === 'category') {
+      if (!config.beltTypes.some((c: any) => c.id === data.id)) {
+        config.beltTypes.push(data);
+      } else {
+        return res.status(400).json({ error: 'Category with same ID already exists in configuration' });
+      }
+    } else if (delItem.type === 'style') {
+      const parentCategoryId = data.parentCategoryId;
+      const styleObj = data.style;
+      const category = config.beltTypes.find((c: any) => c.id === parentCategoryId);
+      if (!category) {
+        return res.status(400).json({ error: `Cannot restore: Parent Category does not exist anymore` });
+      }
+      if (!Array.isArray(category.styles)) category.styles = [];
+      if (!category.styles.some((s: any) => s.id === styleObj.id)) {
+        category.styles.push(styleObj);
+      } else {
+        return res.status(400).json({ error: 'Style already exists in Category' });
+      }
+    } else if (delItem.type === 'bom') {
+      const { bomItem, parentCategoryId, parentStyleId } = data;
+      const category = config.beltTypes.find((c: any) => c.id === parentCategoryId);
+      if (!category) {
+        return res.status(400).json({ error: `Cannot restore: Parent Category does not exist` });
+      }
+      const style = category.styles?.find((s: any) => s.id === parentStyleId);
+      if (!style) {
+        return res.status(400).json({ error: `Cannot restore: Parent Style does not exist` });
+      }
+      if (!Array.isArray(style.bom)) style.bom = [];
+      if (!style.bom.some((b: any) => b.id === bomItem.id)) {
+        style.bom.push(bomItem);
+      } else {
+        return res.status(400).json({ error: 'Component already exists in Style BOM' });
+      }
+    } else if (delItem.type === 'subcategory') {
+      const { option, parentCategoryId, parentStyleId, parentBOMId } = data;
+      const category = config.beltTypes.find((c: any) => c.id === parentCategoryId);
+      if (!category) {
+        return res.status(400).json({ error: `Cannot restore: Parent Category does not exist` });
+      }
+      const style = category.styles?.find((s: any) => s.id === parentStyleId);
+      if (!style) {
+        return res.status(400).json({ error: `Cannot restore: Parent Style does not exist` });
+      }
+      const bomItem = style.bom?.find((b: any) => b.id === parentBOMId);
+      if (!bomItem) {
+        return res.status(400).json({ error: `Cannot restore: Parent BOM Component does not exist` });
+      }
+      if (!Array.isArray(bomItem.options)) bomItem.options = [];
+      if (!bomItem.options.some((o: any) => o.name === option.name)) {
+        bomItem.options.push(option);
+      } else {
+        return res.status(400).json({ error: 'Sub-category Option already exists in BOM Component' });
+      }
+    }
+
+    // 4. Update system_config in PG
+    await pool.query(
+      'UPDATE system_config SET data = $1 WHERE id = $2',
+      [JSON.stringify(config), 'default']
+    );
+
+    // 5. Delete from deleted_configs history
+    await pool.query('DELETE FROM deleted_configs WHERE id = $1', [id]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to restore config', err);
+    res.status(500).json({ error: 'Failed to restore configuration item' });
+  }
+});
+
+app.delete('/api/settings/config/deleted/:id', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    await pool.query('DELETE FROM deleted_configs WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to purge deleted config log', err);
+    res.status(500).json({ error: 'Failed to purge configuration log' });
   }
 });
 
@@ -1871,6 +2304,220 @@ app.delete('/api/material-stocks/:id', async (req: any, res) => {
   }
 });
 
+// Ready Belt Stocks Routes
+app.get('/api/ready-belt-stocks', authenticate, async (req: any, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM ready_belt_stocks ORDER BY category ASC, id ASC');
+    res.json(result.rows.map(row => ({
+      id: row.id,
+      category: row.category,
+      beltStock: row.belt_stock,
+      size: row.size,
+      openingPisc: parseInt(row.opening_pisc, 10) || 0,
+      recvPisc: parseInt(row.recv_pisc, 10) || 0,
+      issuesPisc: parseInt(row.issues_pisc, 10) || 0,
+      closingPisc: parseInt(row.closing_pisc, 10) || 0,
+      soNo: row.so_no || '',
+      receiverName: row.receiver_name || '',
+      detailsLog: row.details_log || []
+    })));
+  } catch (err) {
+    console.error('Failed to get ready belt stocks', err);
+    res.status(500).json({ error: 'Failed to retrieve ready belt stocks' });
+  }
+});
+
+app.post('/api/ready-belt-stocks', authenticate, async (req: any, res) => {
+  try {
+    const { category, beltStock, size, openingPisc, recvPisc, issuesPisc, soNo, receiverName } = req.body;
+    if (!category || !category.trim()) return res.status(400).json({ error: 'Category is required' });
+    if (!beltStock || !beltStock.trim()) return res.status(400).json({ error: 'Belt Stock name is required' });
+    if (!size || !size.trim()) return res.status(400).json({ error: 'Size is required' });
+
+    const open = parseInt(openingPisc, 10) || 0;
+    const recv = parseInt(recvPisc, 10) || 0;
+    const issue = parseInt(issuesPisc, 10) || 0;
+
+    const actualOpening = open + recv - issue;
+    const closing = actualOpening;
+    const id = 'ready-' + Date.now();
+
+    const timestampStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    const initialLog = {
+      dateTime: timestampStr,
+      username: req.user?.username || 'unknown',
+      name: req.user?.name || 'Unknown User',
+      action: `Created stock with Opening: ${open}${recv > 0 ? `, Recv: ${recv}` : ''}${issue > 0 ? `, Issues: ${issue}` : ''}`,
+      recvQty: recv,
+      issuesQty: issue,
+      soNo: (soNo || '').trim() || '-',
+      receiverName: (receiverName || '').trim() || '-',
+      openingQty: open
+    };
+    const detailsLog = JSON.stringify([initialLog]);
+
+    await pool.query(
+      `INSERT INTO ready_belt_stocks 
+       (id, category, belt_stock, size, opening_pisc, recv_pisc, issues_pisc, closing_pisc, so_no, receiver_name, details_log) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [id, category.trim(), beltStock.trim(), size.trim(), actualOpening, recv, issue, closing, (soNo || '').trim(), (receiverName || '').trim(), detailsLog]
+    );
+
+    res.json({
+      id,
+      category: category.trim(),
+      beltStock: beltStock.trim(),
+      size: size.trim(),
+      openingPisc: actualOpening,
+      recvPisc: recv,
+      issuesPisc: issue,
+      closingPisc: closing,
+      soNo: (soNo || '').trim(),
+      receiverName: (receiverName || '').trim(),
+      detailsLog: [initialLog]
+    });
+  } catch (err) {
+    console.error('Failed to add ready belt stock', err);
+    res.status(500).json({ error: 'Failed to add ready belt stock' });
+  }
+});
+
+app.put('/api/ready-belt-stocks/:id', authenticate, async (req: any, res) => {
+  try {
+    const { category, beltStock, size, openingPisc, recvPisc, issuesPisc, soNo, receiverName } = req.body;
+    if (!category || !category.trim()) return res.status(400).json({ error: 'Category is required' });
+    if (!beltStock || !beltStock.trim()) return res.status(400).json({ error: 'Belt Stock name is required' });
+    if (!size || !size.trim()) return res.status(400).json({ error: 'Size is required' });
+
+    // Fetch existing record
+    const currentRes = await pool.query('SELECT * FROM ready_belt_stocks WHERE id = $1', [req.params.id]);
+    if (currentRes.rowCount === 0) return res.status(404).json({ error: 'Ready belt stock item not found' });
+    const current = currentRes.rows[0];
+
+    const oldOpening = parseInt(current.opening_pisc, 10) || 0;
+    const oldRecv = parseInt(current.recv_pisc, 10) || 0;
+    const oldIssues = parseInt(current.issues_pisc, 10) || 0;
+    let oldDetailsLog = current.details_log || [];
+    if (typeof oldDetailsLog === 'string') {
+      try {
+        oldDetailsLog = JSON.parse(oldDetailsLog);
+      } catch (e) {
+        oldDetailsLog = [];
+      }
+    }
+
+    const newOpening = parseInt(openingPisc, 10) || 0;
+    const newRecv = parseInt(recvPisc, 10) || 0;
+    const newIssues = parseInt(issuesPisc, 10) || 0;
+
+    const diffRecv = newRecv - oldRecv;
+    const diffIssues = newIssues - oldIssues;
+
+    const isAdmin = req.user?.role === 'admin';
+    let updatedOpening = oldOpening;
+    if (isAdmin) {
+      updatedOpening = newOpening; // Admin can change opening directly
+    }
+    // Any new received quantity is added to opening stock
+    if (diffRecv !== 0) {
+      updatedOpening += diffRecv;
+    }
+    // Any issued quantity is subtracted from opening stock
+    if (diffIssues !== 0) {
+      updatedOpening -= diffIssues;
+    }
+
+    const updatedIssues = newIssues;
+    const closing = updatedOpening;
+
+    // Log changes
+    const changes: string[] = [];
+    if (isAdmin && newOpening !== oldOpening) {
+      changes.push(`Admin changed Opening stock from ${oldOpening} to ${newOpening}`);
+    }
+    if (diffRecv > 0) {
+      changes.push(`Received +${diffRecv} Pcs`);
+    } else if (diffRecv < 0) {
+      changes.push(`Received correction ${diffRecv} Pcs`);
+    }
+    if (diffIssues > 0) {
+      changes.push(`Issued +${diffIssues} Pcs`);
+    } else if (diffIssues < 0) {
+      changes.push(`Issued correction ${diffIssues} Pcs`);
+    }
+
+    if (current.category !== category.trim()) changes.push(`Category changed`);
+    if (current.belt_stock !== beltStock.trim()) changes.push(`Stock name changed`);
+    if (current.size !== size.trim()) changes.push(`Size changed`);
+    if ((current.so_no || '') !== (soNo || '').trim()) changes.push(`SO No updated to ${(soNo || '').trim()}`);
+    if ((current.receiver_name || '') !== (receiverName || '').trim()) changes.push(`Receiver Name updated to ${(receiverName || '').trim()}`);
+
+    let updatedDetailsLog = oldDetailsLog;
+    if (changes.length > 0) {
+      const timestampStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+      const newLog = {
+        dateTime: timestampStr,
+        username: req.user?.username || 'unknown',
+        name: req.user?.name || 'Unknown',
+        action: changes.join(', '),
+        recvQty: diffRecv !== 0 ? diffRecv : undefined,
+        issuesQty: diffIssues !== 0 ? diffIssues : undefined,
+        soNo: (soNo || '').trim() || '-',
+        receiverName: (receiverName || '').trim() || '-',
+        openingQty: oldOpening
+      };
+      updatedDetailsLog = [newLog, ...oldDetailsLog];
+    }
+
+    await pool.query(
+      `UPDATE ready_belt_stocks 
+       SET category = $1, belt_stock = $2, size = $3, opening_pisc = $4, recv_pisc = $5, issues_pisc = $6, closing_pisc = $7, so_no = $8, receiver_name = $9, details_log = $10 
+       WHERE id = $11`,
+      [
+        category.trim(),
+        beltStock.trim(),
+        size.trim(),
+        updatedOpening,
+        newRecv,
+        updatedIssues,
+        closing,
+        (soNo || '').trim(),
+        (receiverName || '').trim(),
+        JSON.stringify(updatedDetailsLog),
+        req.params.id
+      ]
+    );
+
+    res.json({
+      id: req.params.id,
+      category: category.trim(),
+      beltStock: beltStock.trim(),
+      size: size.trim(),
+      openingPisc: updatedOpening,
+      recvPisc: newRecv,
+      issuesPisc: updatedIssues,
+      closingPisc: closing,
+      soNo: (soNo || '').trim(),
+      receiverName: (receiverName || '').trim(),
+      detailsLog: updatedDetailsLog
+    });
+  } catch (err) {
+    console.error('Failed to update ready belt stock', err);
+    res.status(500).json({ error: 'Failed to update ready belt stock' });
+  }
+});
+
+app.delete('/api/ready-belt-stocks/:id', authenticate, async (req: any, res) => {
+  try {
+    await pool.query('DELETE FROM ready_belt_stocks WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to delete ready belt stock', err);
+    res.status(500).json({ error: 'Failed to delete ready belt stock' });
+  }
+});
+
+
 // ─── Material Issues / Production Log Routes ──────────────────────────────
 
 app.get('/api/material-issues', async (req, res) => {
@@ -1884,6 +2531,7 @@ app.get('/api/material-issues', async (req, res) => {
       unit: row.unit,
       issuedTo: row.issued_to,
       notes: row.notes || '',
+      lotNumber: row.lot_number || '',
       issuedAt: row.issued_at
     })));
   } catch (err) {
@@ -1894,7 +2542,7 @@ app.get('/api/material-issues', async (req, res) => {
 
 app.post('/api/material-issues', async (req: any, res) => {
   try {
-    const { materialId, materialName, quantity, unit, issuedTo, notes } = req.body;
+    const { materialId, materialName, quantity, unit, issuedTo, notes, lotNumber } = req.body;
     if (!materialName || !issuedTo) return res.status(400).json({ error: 'Material name and issued-to are required' });
     if (!quantity || quantity <= 0) return res.status(400).json({ error: 'Quantity must be greater than 0' });
 
@@ -1915,10 +2563,16 @@ app.post('/api/material-issues', async (req: any, res) => {
         if (lots && lots.length > 0) {
           let remainingToIssue = qtyToIssue;
           const isInt = Number.isInteger(qtyToIssue);
+          
+          // Filter to target lot if specified
+          const targetLots = lotNumber 
+            ? lots.filter((l: any) => l.lotNumber === lotNumber)
+            : lots;
+
           if (isInt) {
-            for (let i = 0; i < lots.length; i++) {
+            for (let i = 0; i < targetLots.length; i++) {
               if (remainingToIssue <= 0) break;
-              const lot = lots[i];
+              const lot = targetLots[i];
               if (lot.pieces && lot.pieces.length > 0) {
                 const piecesCount = lot.pieces.length;
                 if (piecesCount <= remainingToIssue) {
@@ -1931,9 +2585,9 @@ app.post('/api/material-issues', async (req: any, res) => {
               }
             }
           } else {
-            for (let i = 0; i < lots.length; i++) {
+            for (let i = 0; i < targetLots.length; i++) {
               if (remainingToIssue <= 0) break;
-              const lot = lots[i];
+              const lot = targetLots[i];
               if (lot.pieces && lot.pieces.length > 0) {
                 while (lot.pieces.length > 0 && remainingToIssue > 0) {
                   const firstPiece = lot.pieces[0];
@@ -1951,6 +2605,16 @@ app.post('/api/material-issues', async (req: any, res) => {
               }
             }
           }
+
+          // Merge targetLots back into lots
+          if (lotNumber) {
+            lots = lots.map((l: any) => {
+              if (l.lotNumber === lotNumber) {
+                return targetLots.find((tl: any) => tl.lotNumber === lotNumber) || l;
+              }
+              return l;
+            });
+          }
           lots = lots.filter((l: any) => l.pieces && l.pieces.length > 0);
         }
 
@@ -1960,10 +2624,10 @@ app.post('/api/material-issues', async (req: any, res) => {
 
     const id = 'issue-' + Date.now();
     await pool.query(
-      'INSERT INTO material_issues (id, material_id, material_name, quantity, unit, issued_to, notes) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [id, materialId || '', materialName, parseFloat(quantity), unit || 'pcs', issuedTo.trim(), notes || '']
+      'INSERT INTO material_issues (id, material_id, material_name, quantity, unit, issued_to, notes, lot_number) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [id, materialId || '', materialName, parseFloat(quantity), unit || 'pcs', issuedTo.trim(), notes || '', lotNumber || null]
     );
-    res.json({ id, materialId: materialId || '', materialName, quantity: parseFloat(quantity), unit: unit || 'pcs', issuedTo: issuedTo.trim(), notes: notes || '', issuedAt: new Date().toISOString() });
+    res.json({ id, materialId: materialId || '', materialName, quantity: parseFloat(quantity), unit: unit || 'pcs', issuedTo: issuedTo.trim(), notes: notes || '', lotNumber: lotNumber || '', issuedAt: new Date().toISOString() });
   } catch (err) {
     console.error('Failed to create material issue', err);
     res.status(500).json({ error: 'Failed to issue material' });
@@ -1984,15 +2648,15 @@ app.delete('/api/material-issues/:id', async (req: any, res) => {
 
 app.post('/api/material-requests', async (req: any, res) => {
   try {
-    const { materialId, materialName, requestedQuantity, unit, requestedBy, notes } = req.body;
+    const { materialId, materialName, requestedQuantity, unit, requestedBy, notes, lotNumber } = req.body;
     if (!materialName || !requestedQuantity || !requestedBy) {
       return res.status(400).json({ error: 'Material name, quantity, and requester name are required' });
     }
     const id = 'req-' + Date.now();
     await pool.query(
-      `INSERT INTO material_requests (id, material_id, material_name, requested_quantity, unit, requested_by, notes) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [id, materialId || null, materialName.trim(), parseFloat(requestedQuantity), (unit || 'pcs').trim(), requestedBy.trim(), notes || '']
+      `INSERT INTO material_requests (id, material_id, material_name, requested_quantity, unit, requested_by, notes, lot_number) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [id, materialId || null, materialName.trim(), parseFloat(requestedQuantity), (unit || 'pcs').trim(), requestedBy.trim(), notes || '', lotNumber || null]
     );
     res.json({ id, success: true });
   } catch (err) {
@@ -2024,6 +2688,7 @@ app.get('/api/material-requests', async (req, res) => {
       approvedQuantity: row.approved_quantity ? parseFloat(row.approved_quantity) : null,
       approvedBy: row.approved_by || '',
       approvalNotes: row.approval_notes || '',
+      lotNumber: row.lot_number || '',
       requestedAt: row.requested_at,
       approvedAt: row.approved_at
     })));
@@ -2035,7 +2700,7 @@ app.get('/api/material-requests', async (req, res) => {
 
 app.post('/api/material-requests/:id/approve', async (req: any, res) => {
   const { id } = req.params;
-  const { approvedQuantity, approvalNotes, approvedBy } = req.body;
+  const { approvedQuantity, approvalNotes, approvedBy, lotNumber } = req.body;
   if (approvedQuantity === undefined || isNaN(approvedQuantity) || parseFloat(approvedQuantity) <= 0) {
     return res.status(400).json({ error: 'Valid approved quantity is required' });
   }
@@ -2055,9 +2720,9 @@ app.post('/api/material-requests/:id/approve', async (req: any, res) => {
 
     await pool.query(
       `UPDATE material_requests 
-       SET status = 'approved', approved_quantity = $1, approved_by = $2, approval_notes = $3, approved_at = CURRENT_TIMESTAMP
-       WHERE id = $4`,
-      [appQty, appBy, appNotes, id]
+       SET status = 'approved', approved_quantity = $1, approved_by = $2, approval_notes = $3, lot_number = $4, approved_at = CURRENT_TIMESTAMP
+       WHERE id = $5`,
+      [appQty, appBy, appNotes, lotNumber || null, id]
     );
 
     const materialId = request.material_id;
@@ -2077,10 +2742,16 @@ app.post('/api/material-requests/:id/approve', async (req: any, res) => {
         if (lots && lots.length > 0) {
           let remainingToIssue = appQty;
           const isInt = Number.isInteger(appQty);
+          
+          // Filter to target lot if specified
+          const targetLots = lotNumber 
+            ? lots.filter((l: any) => l.lotNumber === lotNumber)
+            : lots;
+
           if (isInt) {
-            for (let i = 0; i < lots.length; i++) {
+            for (let i = 0; i < targetLots.length; i++) {
               if (remainingToIssue <= 0) break;
-              const lot = lots[i];
+              const lot = targetLots[i];
               if (lot.pieces && lot.pieces.length > 0) {
                 const piecesCount = lot.pieces.length;
                 if (piecesCount <= remainingToIssue) {
@@ -2093,9 +2764,9 @@ app.post('/api/material-requests/:id/approve', async (req: any, res) => {
               }
             }
           } else {
-            for (let i = 0; i < lots.length; i++) {
+            for (let i = 0; i < targetLots.length; i++) {
               if (remainingToIssue <= 0) break;
-              const lot = lots[i];
+              const lot = targetLots[i];
               if (lot.pieces && lot.pieces.length > 0) {
                 while (lot.pieces.length > 0 && remainingToIssue > 0) {
                   const firstPiece = lot.pieces[0];
@@ -2113,6 +2784,16 @@ app.post('/api/material-requests/:id/approve', async (req: any, res) => {
               }
             }
           }
+
+          // Merge targetLots back into lots
+          if (lotNumber) {
+            lots = lots.map((l: any) => {
+              if (l.lotNumber === lotNumber) {
+                return targetLots.find((tl: any) => tl.lotNumber === lotNumber) || l;
+              }
+              return l;
+            });
+          }
           lots = lots.filter((l: any) => l.pieces && l.pieces.length > 0);
         }
 
@@ -2125,9 +2806,9 @@ app.post('/api/material-requests/:id/approve', async (req: any, res) => {
     const issueNote = `Approved Qty: ${appQty} (Requested: ${request.requested_quantity}). Note: ${appNotes}`;
 
     await pool.query(
-      `INSERT INTO material_issues (id, material_id, material_name, quantity, unit, issued_to, notes, issued_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
-      [issueId, materialId || '', request.material_name, appQty, request.unit || 'pcs', issuedTo, issueNote]
+      `INSERT INTO material_issues (id, material_id, material_name, quantity, unit, issued_to, notes, lot_number, issued_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)`,
+      [issueId, materialId || '', request.material_name, appQty, request.unit || 'pcs', issuedTo, issueNote, lotNumber || null]
     );
 
     res.json({ success: true });
@@ -2543,9 +3224,25 @@ app.post('/api/quotations/:id/smart-cut', authenticate, async (req: any, res) =>
 // Quotations Routes
 app.get('/api/quotations', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM quotations');
+    const { clientId, clientName } = req.query as { clientId?: string; clientName?: string };
+
+    let query = 'SELECT * FROM quotations';
+    const params: any[] = [];
+
+    if (clientId) {
+      query += ' WHERE client_id = $1';
+      params.push(clientId);
+    } else if (clientName) {
+      query += ' WHERE LOWER(client_name) = LOWER($1)';
+      params.push(clientName);
+    }
+
+    query += ' ORDER BY created_at DESC';
+
+    const result = await pool.query(query, params);
     const quotations = result.rows.map(row => ({
       id: row.id,
+      orderNumber: row.order_number,
       clientId: row.client_id,
       clientName: row.client_name,
       beltType: row.belt_type,
@@ -2564,7 +3261,8 @@ app.get('/api/quotations', async (req, res) => {
       updatedAt: row.updated_at,
       auditLogs: typeof row.audit_logs === 'string' ? JSON.parse(row.audit_logs) : row.audit_logs,
       company: row.company,
-      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || [])
+      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+      salesMarkup: row.sales_markup ? parseFloat(row.sales_markup) : 0
     }));
     res.json(quotations);
   } catch (err) {
@@ -2576,26 +3274,26 @@ app.get('/api/quotations', async (req, res) => {
 app.post('/api/quotations', authenticate, async (req, res) => {
   try {
     const id = Date.now().toString();
-    const { clientId, clientName, beltType = '', beltStyle = '', selectedBOMOptions = {}, dimensions = {}, jointType = '', tapeType = '', totalCost, status, discountRequested, discountReason, rejectionReason, createdBy, auditLogs, company, items = [] } = req.body;
+    const { clientId, clientName, beltType = '', beltStyle = '', selectedBOMOptions = {}, dimensions = {}, jointType = '', tapeType = '', totalCost, status, discountRequested, discountReason, rejectionReason, createdBy, auditLogs, company, items = [], salesMarkup = 0 } = req.body;
     const now = new Date();
     await pool.query(
       `INSERT INTO quotations (
         id, client_id, client_name, belt_type, dimensions, joint_type, tape_type, 
         total_cost, status, discount_requested, discount_reason, rejection_reason, 
-        created_by, created_at, updated_at, audit_logs, company, belt_style, selected_bom_options, items
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+        created_by, created_at, updated_at, audit_logs, company, belt_style, selected_bom_options, items, sales_markup
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
       [
         id, clientId, clientName, beltType, JSON.stringify(dimensions), jointType || '', tapeType || '',
         totalCost, status, discountRequested || null, discountReason || null, rejectionReason || null,
         createdBy, now, now, JSON.stringify(auditLogs || []), company || null, beltStyle || '', JSON.stringify(selectedBOMOptions || {}),
-        JSON.stringify(items || [])
+        JSON.stringify(items || []), salesMarkup
       ]
     );
     res.json({
       id, clientId, clientName, beltType, beltStyle: beltStyle || '', selectedBOMOptions: selectedBOMOptions || {}, dimensions, jointType: jointType || '', tapeType: tapeType || '',
       totalCost, status, discountRequested, discountReason, rejectionReason,
       createdBy, createdAt: now.toISOString(), updatedAt: now.toISOString(), auditLogs: auditLogs || [],
-      company, items: items || []
+      company, items: items || [], salesMarkup: salesMarkup || 0
     });
   } catch (err) {
     console.error('Failed to create quotation', err);
@@ -2628,6 +3326,7 @@ app.put('/api/quotations/:id', authenticate, async (req, res) => {
     const auditLogs = req.body.auditLogs !== undefined ? req.body.auditLogs : existing.audit_logs;
     const company = req.body.company !== undefined ? req.body.company : existing.company;
     const items = req.body.items !== undefined ? req.body.items : existing.items;
+    const salesMarkup = req.body.salesMarkup !== undefined ? req.body.salesMarkup : (existing.sales_markup ? parseFloat(existing.sales_markup) : 0);
 
     const oldStatus = existing.status;
     const newStatus = req.body.status !== undefined ? req.body.status : existing.status;
@@ -2649,8 +3348,8 @@ app.put('/api/quotations/:id', authenticate, async (req, res) => {
         joint_type = $5, tape_type = $6, total_cost = $7, status = $8, 
         discount_requested = $9, discount_reason = $10, rejection_reason = $11, 
         created_by = $12, updated_at = $13, audit_logs = $14, company = $15,
-        belt_style = $16, selected_bom_options = $17, items = $18
-      WHERE id = $19 RETURNING *`,
+        belt_style = $16, selected_bom_options = $17, items = $18, sales_markup = $19
+      WHERE id = $20 RETURNING *`,
       [
         clientId, clientName, beltType, typeof dimensions === 'string' ? dimensions : JSON.stringify(dimensions),
         jointType || '', tapeType || '', totalCost, status,
@@ -2661,6 +3360,7 @@ app.put('/api/quotations/:id', authenticate, async (req, res) => {
         beltStyle || '',
         typeof selectedBOMOptions === 'string' ? selectedBOMOptions : JSON.stringify(selectedBOMOptions || {}),
         typeof items === 'string' ? items : JSON.stringify(items || []),
+        salesMarkup,
         req.params.id
       ]
     );
@@ -2687,7 +3387,8 @@ app.put('/api/quotations/:id', authenticate, async (req, res) => {
       updatedAt: row.updated_at,
       auditLogs: typeof row.audit_logs === 'string' ? JSON.parse(row.audit_logs) : row.audit_logs,
       company: row.company,
-      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || [])
+      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+      salesMarkup: row.sales_markup ? parseFloat(row.sales_markup) : 0
     });
   } catch (err) {
     console.error('Failed to update quotation', err);
@@ -2726,7 +3427,7 @@ app.post('/api/quotations/bulk-delete', authenticate, async (req: any, res) => {
 app.get('/api/users', authenticate, async (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   try {
-    const result = await pool.query('SELECT id, username, name, role, username_lower, permission, allowed_pages FROM users');
+    const result = await pool.query('SELECT id, username, name, role, username_lower, permission, allowed_pages, deletion_code FROM users');
     res.json(result.rows.map(row => ({
       id: row.id,
       username: row.username,
@@ -2734,6 +3435,7 @@ app.get('/api/users', authenticate, async (req: any, res) => {
       role: row.role,
       usernameLower: row.username_lower,
       permission: row.permission || 'write',
+      hasDeletionCode: !!(row.deletion_code && row.deletion_code.trim() !== ''),
       allowedPages: row.role === 'admin'
         ? ['dashboard', 'calculator', 'quotations', 'clients', 'reports', 'activity', 'users', 'config', 'production', 'nesting_dashboard', 'nesting_cutting', 'nesting_rolls_map', 'nesting_details', 'nesting_stock', 'nesting_production', 'nesting_scrub']
         : (row.allowed_pages || 'dashboard,calculator,quotations,clients').split(',')
@@ -2746,7 +3448,7 @@ app.get('/api/users', authenticate, async (req: any, res) => {
 
 app.post('/api/users', authenticate, async (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
-  const { username, name, role, password, permission = 'write', allowedPages = ['dashboard', 'calculator', 'quotations', 'clients'] } = req.body;
+  const { username, name, role, password, permission = 'write', allowedPages = ['dashboard', 'calculator', 'quotations', 'clients'], deletionCode } = req.body;
   
   try {
     const normalizedUsername = username.toLowerCase().trim().replace(/\s+/g, '_');
@@ -2757,10 +3459,11 @@ app.post('/api/users', authenticate, async (req: any, res) => {
     }
   
     const passwordHash = bcrypt.hashSync(password, 10);
+    const deletionCodeHash = (role === 'admin' && deletionCode && deletionCode.trim() !== '') ? bcrypt.hashSync(deletionCode.trim(), 10) : '';
     const allowedPagesStr = Array.isArray(allowedPages) ? allowedPages.join(',') : 'dashboard,calculator,quotations,clients';
     await pool.query(
-      'INSERT INTO users (id, username, name, role, password, username_lower, permission, allowed_pages) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [normalizedUsername, username, name, role, passwordHash, normalizedUsername, permission, allowedPagesStr]
+      'INSERT INTO users (id, username, name, role, password, username_lower, permission, allowed_pages, deletion_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      [normalizedUsername, username, name, role, passwordHash, normalizedUsername, permission, allowedPagesStr, deletionCodeHash]
     );
     res.json({
       id: normalizedUsername,
@@ -2769,6 +3472,7 @@ app.post('/api/users', authenticate, async (req: any, res) => {
       role,
       usernameLower: normalizedUsername,
       permission,
+      hasDeletionCode: deletionCodeHash !== '',
       allowedPages: role === 'admin'
         ? ['dashboard', 'calculator', 'quotations', 'clients', 'reports', 'activity', 'users', 'config', 'production', 'nesting_dashboard', 'nesting_cutting', 'nesting_rolls_map', 'nesting_details', 'nesting_stock', 'nesting_production', 'nesting_scrub']
         : allowedPages
@@ -2781,23 +3485,32 @@ app.post('/api/users', authenticate, async (req: any, res) => {
 
 app.put('/api/users/:id', authenticate, async (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
-  const { name, role, permission, allowedPages, password } = req.body;
+  const { name, role, permission, allowedPages, password, deletionCode } = req.body;
   try {
     const allowedPagesStr = Array.isArray(allowedPages) ? allowedPages.join(',') : 'dashboard,calculator,quotations,clients';
     
-    let query = 'UPDATE users SET name = $1, role = $2, permission = $3, allowed_pages = $4 WHERE id = $5';
-    let params = [name, role, permission, allowedPagesStr, req.params.id];
+    const updates = ['name = $1', 'role = $2', 'permission = $3', 'allowed_pages = $4'];
+    const params = [name, role, permission, allowedPagesStr];
+    let paramIndex = 5;
 
     if (password && password.trim() !== '') {
       const passwordHash = bcrypt.hashSync(password, 10);
-      query = 'UPDATE users SET name = $1, role = $2, permission = $3, allowed_pages = $4, password = $5 WHERE id = $6';
-      params = [name, role, permission, allowedPagesStr, passwordHash, req.params.id];
+      updates.push(`password = $${paramIndex++}`);
+      params.push(passwordHash);
     }
 
-    const result = await pool.query(
-      query + ' RETURNING id, username, name, role, permission, allowed_pages',
-      params
-    );
+    if (role === 'admin' && deletionCode !== undefined && deletionCode !== null) {
+      if (deletionCode.trim() !== '') {
+        const deletionCodeHash = bcrypt.hashSync(deletionCode.trim(), 10);
+        updates.push(`deletion_code = $${paramIndex++}`);
+        params.push(deletionCodeHash);
+      }
+    }
+
+    params.push(req.params.id);
+    const query = `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, username, name, role, permission, allowed_pages, deletion_code`;
+
+    const result = await pool.query(query, params);
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -2808,6 +3521,7 @@ app.put('/api/users/:id', authenticate, async (req: any, res) => {
       name: row.name,
       role: row.role,
       permission: row.permission,
+      hasDeletionCode: !!(row.deletion_code && row.deletion_code.trim() !== ''),
       allowedPages: row.role === 'admin'
         ? ['dashboard', 'calculator', 'quotations', 'clients', 'reports', 'activity', 'users', 'config', 'production', 'nesting_dashboard', 'nesting_cutting', 'nesting_rolls_map', 'nesting_details', 'nesting_stock', 'nesting_production', 'nesting_scrub']
         : (row.allowed_pages || '').split(',')
@@ -2845,6 +3559,21 @@ app.get('/api/audit-logs', authenticate, async (req: any, res) => {
   } catch (err) {
     console.error('Failed to get audit logs', err);
     res.status(500).json({ error: 'Failed to retrieve audit logs' });
+  }
+});
+
+app.post('/api/audit-logs/bulk-delete', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Invalid or empty IDs list' });
+  }
+  try {
+    await pool.query('DELETE FROM audit_logs WHERE id = ANY($1)', [ids]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to bulk delete audit logs', err);
+    res.status(500).json({ error: 'Failed to delete logs' });
   }
 });
 

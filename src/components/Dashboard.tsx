@@ -10,6 +10,7 @@ import { ClientRegistry } from './ClientRegistry';
 import { QuotationsList } from './QuotationsList';
 import { Reports } from './Reports';
 import { ActivityLog } from './ActivityLog';
+import { DataDirectory } from './DataDirectory';
 import { Config, Client } from '../types';
 import { cn } from '../lib/utils';
 import { Loader2, Factory, Calculator as CalcIcon, Scissors, ArrowRight, ArrowLeft, Menu, Clock } from 'lucide-react';
@@ -43,6 +44,7 @@ export const Dashboard = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [pendingMarginRequestsCount, setPendingMarginRequestsCount] = useState(0);
 
   // Keep localStorage and URL in sync whenever module or tab changes
   useEffect(() => {
@@ -121,9 +123,14 @@ export const Dashboard = () => {
 
   const fetchConfigAndClients = async () => {
     try {
-      const [configRes, clientsRes] = await Promise.all([
+      const fetchRequestsPromise = user?.role === 'admin' 
+        ? fetch('/api/margin-requests') 
+        : Promise.resolve(null);
+
+      const [configRes, clientsRes, requestsRes] = await Promise.all([
         fetch('/api/settings/config'),
-        fetch('/api/clients')
+        fetch('/api/clients'),
+        fetchRequestsPromise
       ]);
 
       if (configRes.ok) {
@@ -135,8 +142,14 @@ export const Dashboard = () => {
         const clientsData = await clientsRes.json();
         setClients(clientsData);
       }
+
+      if (requestsRes && requestsRes.ok) {
+        const requestsData = await requestsRes.json();
+        const pendingCount = requestsData.filter((r: any) => r.status === 'pending').length;
+        setPendingMarginRequestsCount(pendingCount);
+      }
     } catch (err) {
-      console.error('Failed to fetch config or clients', err);
+      console.error('Failed to fetch config, clients or requests', err);
     } finally {
       setIsLoading(false);
     }
@@ -177,6 +190,8 @@ export const Dashboard = () => {
         return <Reports config={safeConfig} clients={clients} />;
       case 'activity':
         return <ActivityLog />;
+      case 'data_directory':
+        return <DataDirectory onRefresh={fetchConfigAndClients} />;
       case 'beltcut':
         return <BeltcutPro />;
       default:
@@ -186,7 +201,7 @@ export const Dashboard = () => {
 
   if (activeModule === 'master') {
     return (
-      <div className="min-h-screen bg-[#f8fafc] flex flex-col justify-between text-zinc-900 font-sans antialiased overflow-hidden relative">
+      <div className="min-h-screen bg-[#f1f5f9] flex flex-col justify-between text-zinc-900 font-sans antialiased overflow-hidden relative">
         {/* CSS Keyframes for 3D Mesh and Floating Glow Spheres */}
         <style>{`
           @keyframes float-sphere-1 {
@@ -246,16 +261,19 @@ export const Dashboard = () => {
         {/* Header */}
         <header className="px-4 py-4 sm:px-8 sm:py-5 flex flex-col sm:flex-row gap-4 items-center justify-between border-b border-white/40 backdrop-blur-md bg-white/40 z-10 relative text-center sm:text-left">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-zinc-900 rounded-xl shadow-xl flex items-center justify-center transform hover:rotate-6 transition-transform">
-              <Factory className="h-6 w-6 text-white" />
+            <div className="flex items-center justify-center transform hover:rotate-6 transition-transform">
+              <svg width="34" height="34" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
+                <polygon points="30,8 70,8 92,30 92,70 70,92 30,92 8,70 8,30" stroke="#1e40af" strokeWidth="8" fill="none"/>
+                <text x="50" y="60" fill="#1e40af" fontSize="26" fontWeight="900" textAnchor="middle" fontFamily="sans-serif" letterSpacing="-1">PTB</text>
+              </svg>
             </div>
             <div className="flex flex-col">
-              <span className="text-zinc-900 font-black tracking-tight text-lg leading-none uppercase">Pooja Tekno Belt</span>
-              <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest mt-1">Master Portal</span>
+              <span className="text-[#1e3a8a] font-black tracking-tight text-lg leading-none uppercase">POOJA TEKNOBELT</span>
+              <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest mt-1">Master Portal</span>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-zinc-700 font-bold uppercase tracking-wider bg-white/80 px-3.5 py-2 rounded-xl border border-white shadow-[0_4px_12px_rgba(0,0,0,0.03)] backdrop-blur-sm">
+            <span className="text-xs text-[#1e3a8a] font-bold uppercase tracking-wider bg-white/80 px-3.5 py-2 rounded-xl border border-blue-100 shadow-[0_4px_12px_rgba(30,58,138,0.03)] backdrop-blur-sm">
               Logged in as: {user?.name || user?.username}
             </span>
           </div>
@@ -428,7 +446,7 @@ export const Dashboard = () => {
 
   if (activeModule === 'production') {
     return (
-      <div className="min-h-screen bg-zinc-50 overflow-hidden">
+      <div className="min-h-screen bg-[#f1f5f9] overflow-hidden">
         <BeltcutPro onBackToMaster={() => handleModuleChange('master')} />
       </div>
     );
@@ -436,14 +454,14 @@ export const Dashboard = () => {
 
   if (activeModule === 'presence') {
     return (
-      <div className="min-h-screen bg-zinc-50 overflow-hidden">
+      <div className="min-h-screen bg-[#f1f5f9] overflow-hidden">
         <PresenceProPortal url="/presence" onClose={() => handleModuleChange('master')} />
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen bg-zinc-50 overflow-hidden relative">
+    <div className="flex h-screen bg-[#f1f5f9] overflow-hidden relative">
       <Sidebar 
         activeTab={activeTab} 
         setActiveTab={handleTabChange} 
@@ -451,6 +469,7 @@ export const Dashboard = () => {
         onBackToMaster={() => handleModuleChange('master')}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
+        pendingMarginRequestsCount={pendingMarginRequestsCount}
       />
       <main className="flex-1 overflow-y-auto p-3 sm:p-5">
         <div className={cn("mx-auto", activeTab === 'reports' ? "w-full max-w-none" : "max-w-7xl")}>
