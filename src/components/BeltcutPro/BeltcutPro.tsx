@@ -73,21 +73,26 @@ const parseLocaleDateString = (dateStr: string): Date | null => {
   }
 };
 
-const getStockStatusForDate = (item: ReadyBeltStock, targetDateStr: string) => {
-  if (!targetDateStr) {
+const getStockStatusForDateRange = (item: ReadyBeltStock, fromDateStr?: string, toDateStr?: string) => {
+  if (!fromDateStr && !toDateStr) {
     return {
       received: 0,
       issued: 0,
-      closing: item.openingPisc
+      closing: item.closingPisc !== undefined ? item.closingPisc : item.openingPisc
     };
   }
 
-  const dateParts = targetDateStr.split('-');
-  const targetYear = parseInt(dateParts[0], 10);
-  const targetMonth = parseInt(dateParts[1], 10) - 1;
-  const targetDay = parseInt(dateParts[2], 10);
-  
-  const targetDateEnd = new Date(targetYear, targetMonth, targetDay, 23, 59, 59, 999);
+  let fromDateStart: Date | null = null;
+  if (fromDateStr) {
+    const parts = fromDateStr.split('-');
+    fromDateStart = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 0, 0, 0, 0);
+  }
+
+  let toDateEnd: Date | null = null;
+  if (toDateStr) {
+    const parts = toDateStr.split('-');
+    toDateEnd = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 23, 59, 59, 999);
+  }
 
   let receivedOnDate = 0;
   let issuedOnDate = 0;
@@ -98,16 +103,15 @@ const getStockStatusForDate = (item: ReadyBeltStock, targetDateStr: string) => {
     const logDate = parseLocaleDateString(log.dateTime);
     if (!logDate) return;
 
-    const isSameDay = logDate.getFullYear() === targetYear &&
-                      logDate.getMonth() === targetMonth &&
-                      logDate.getDate() === targetDay;
+    const afterFrom = !fromDateStart || logDate >= fromDateStart;
+    const beforeTo = !toDateEnd || logDate <= toDateEnd;
 
-    if (isSameDay) {
+    if (afterFrom && beforeTo) {
       if (log.recvQty) receivedOnDate += log.recvQty;
       if (log.issuesQty) issuedOnDate += log.issuesQty;
     }
 
-    if (logDate > targetDateEnd) {
+    if (toDateEnd && logDate > toDateEnd) {
       if (log.recvQty) recvAfter += log.recvQty;
       if (log.issuesQty) issueAfter += log.issuesQty;
     }
@@ -120,6 +124,10 @@ const getStockStatusForDate = (item: ReadyBeltStock, targetDateStr: string) => {
     issued: issuedOnDate,
     closing: closingAtDate
   };
+};
+
+const getStockStatusForDate = (item: ReadyBeltStock, targetDateStr: string) => {
+  return getStockStatusForDateRange(item, targetDateStr, targetDateStr);
 };
 
 const isInventoryCutName = (name?: string) => {

@@ -105,8 +105,12 @@ async function initializeDatabase() {
         name VARCHAR(255) NOT NULL,
         parent_path VARCHAR(255) DEFAULT '',
         data JSONB NOT NULL,
-        deleted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        deleted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        deleted_by VARCHAR(255) DEFAULT 'System Admin'
       )
+    `);
+    await pool.query(`
+      ALTER TABLE deleted_configs ADD COLUMN IF NOT EXISTS deleted_by VARCHAR(255) DEFAULT 'System Admin';
     `);
 
     // Create Rate History table
@@ -280,6 +284,32 @@ async function initializeDatabase() {
       )
     `);
 
+    // Create Margin Requests table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS margin_requests (
+        id VARCHAR(255) PRIMARY KEY,
+        client_id VARCHAR(255) NOT NULL,
+        client_name VARCHAR(255) NOT NULL,
+        belt_type VARCHAR(255) NOT NULL,
+        belt_style VARCHAR(255) NOT NULL,
+        requested_by VARCHAR(255) NOT NULL,
+        requested_by_name VARCHAR(255) NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending' NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Ensure length, width, length_unit, and width_unit columns exist on margin_requests table
+    try {
+      await pool.query(`ALTER TABLE margin_requests ADD COLUMN IF NOT EXISTS length NUMERIC`);
+      await pool.query(`ALTER TABLE margin_requests ADD COLUMN IF NOT EXISTS width NUMERIC`);
+      await pool.query(`ALTER TABLE margin_requests ADD COLUMN IF NOT EXISTS length_unit VARCHAR(50)`);
+      await pool.query(`ALTER TABLE margin_requests ADD COLUMN IF NOT EXISTS width_unit VARCHAR(50)`);
+    } catch (alterErr) {
+      console.warn('Failed to add columns to margin_requests table:', alterErr);
+    }
+
     // Create Rolls table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS rolls (
@@ -311,12 +341,13 @@ async function initializeDatabase() {
       )
     `);
 
-    // Schema alterations for reuse roll tracking
+    // Schema alterations for reuse roll tracking and timestamps
     try {
       await pool.query(`ALTER TABLE rolls ADD COLUMN IF NOT EXISTS is_reuse BOOLEAN DEFAULT FALSE`);
       await pool.query(`ALTER TABLE rolls ADD COLUMN IF NOT EXISTS parent_roll_id VARCHAR(255)`);
       await pool.query(`ALTER TABLE rolls ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active'`);
       await pool.query(`ALTER TABLE rolls ADD COLUMN IF NOT EXISTS reorder_level NUMERIC DEFAULT 0 NOT NULL`);
+      await pool.query(`ALTER TABLE rolls ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP`);
       await pool.query(`UPDATE rolls SET is_reuse = TRUE WHERE id LIKE 'REUSE-%' AND is_reuse = FALSE`);
     } catch (alterErr) {
       console.warn('Failed to add columns to rolls table:', alterErr);
@@ -325,8 +356,9 @@ async function initializeDatabase() {
     // Schema alterations for cuts table
     try {
       await pool.query(`ALTER TABLE cuts ADD COLUMN IF NOT EXISTS so_number VARCHAR(255)`);
+      await pool.query(`ALTER TABLE cuts ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP`);
     } catch (alterErr) {
-      console.warn('Failed to add so_number column to cuts table:', alterErr);
+      console.warn('Failed to add columns to cuts table:', alterErr);
     }
 
     // Schema alterations for material type reorder levels
@@ -431,7 +463,7 @@ async function initializeDatabase() {
             details_log = '[]'::jsonb
           WHERE details_log IS NULL
         `);
-        if (migrationRes.rowCount > 0) {
+        if ((migrationRes.rowCount || 0) > 0) {
           console.log(`Migrated ${migrationRes.rowCount} ready_belt_stocks rows to new schema (opening = opening + recv).`);
         }
       } catch (alterErr) {
@@ -1861,6 +1893,29 @@ app.post('/api/settings/config', authenticate, async (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   try {
     const newConfig = req.body;
+    const changerName = req.user.name || req.user.username || 'Admin';
+
+    // Ensure all items in the incoming config have unique IDs if missing
+    if (newConfig && Array.isArray(newConfig.beltTypes)) {
+      newConfig.beltTypes.forEach((cat: any) => {
+        if (!cat.id) cat.id = `cat-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        if (Array.isArray(cat.styles)) {
+          cat.styles.forEach((style: any) => {
+            if (!style.id) style.id = `style-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            if (Array.isArray(style.bom)) {
+              style.bom.forEach((bom: any) => {
+                if (!bom.id) bom.id = `bom-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                if (Array.isArray(bom.options)) {
+                  bom.options.forEach((opt: any) => {
+                    if (!opt.id) opt.id = `opt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                  });
+                }
+              });
+            }
+          });
+        }
+      });
+    }
     
     // 1. Fetch old config to diff
     const oldConfigRes = await pool.query('SELECT data FROM system_config WHERE id = $1', ['default']);
@@ -1872,45 +1927,44 @@ app.post('/api/settings/config', authenticate, async (req: any, res) => {
       
       // Category Deletions Check
       for (const oldCat of oldBelts) {
-        const isStillPresent = newBelts.some((c: any) => c.id === oldCat.id);
+        const isStillPresent = newBelts.some((c: any) => (c.id && oldCat.id && c.id === oldCat.id) || c.name === oldCat.name);
         if (!isStillPresent) {
-          const logId = `del-cat-${oldCat.id}-${Date.now()}`;
+          const logId = `del-cat-${oldCat.id || Date.now()}-${Date.now()}`;
           await pool.query(
-            `INSERT INTO deleted_configs (id, type, name, parent_path, data) 
-             VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
-            [logId, 'category', oldCat.name, '', JSON.stringify(oldCat)]
+            `INSERT INTO deleted_configs (id, type, name, parent_path, data, deleted_by) 
+             VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING`,
+            [logId, 'category', oldCat.name, '', JSON.stringify(oldCat), changerName]
           );
         } else {
           // Check for Style Deletions
-          const newCat = newBelts.find((c: any) => c.id === oldCat.id);
+          const newCat = newBelts.find((c: any) => (c.id && oldCat.id && c.id === oldCat.id) || c.name === oldCat.name);
           if (newCat && Array.isArray(oldCat.styles) && Array.isArray(newCat.styles)) {
             for (const oldStyle of oldCat.styles) {
-              const isStylePresent = newCat.styles.some((s: any) => s.id === oldStyle.id);
+              const isStylePresent = newCat.styles.some((s: any) => (s.id && oldStyle.id && s.id === oldStyle.id) || s.name === oldStyle.name);
               if (!isStylePresent) {
-                const logId = `del-style-${oldStyle.id}-${Date.now()}`;
+                const logId = `del-style-${oldStyle.id || Date.now()}-${Date.now()}`;
                 await pool.query(
-                  `INSERT INTO deleted_configs (id, type, name, parent_path, data) 
-                   VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
-                  [logId, 'style', oldStyle.name, oldCat.name, JSON.stringify({ style: oldStyle, parentCategoryId: oldCat.id })]
+                  `INSERT INTO deleted_configs (id, type, name, parent_path, data, deleted_by) 
+                   VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING`,
+                  [logId, 'style', oldStyle.name, oldCat.name, JSON.stringify({ style: oldStyle, parentCategoryId: oldCat.id }), changerName]
                 );
               } else {
                 // Check for BOM Component Deletions & Rate Changes
-                const newStyle = newCat.styles.find((s: any) => s.id === oldStyle.id);
+                const newStyle = newCat.styles.find((s: any) => (s.id && oldStyle.id && s.id === oldStyle.id) || s.name === oldStyle.name);
                 if (newStyle && Array.isArray(oldStyle.bom) && Array.isArray(newStyle.bom)) {
                   for (const oldBOM of oldStyle.bom) {
-                    const isBOMPresent = newStyle.bom.some((b: any) => b.id === oldBOM.id);
+                    const isBOMPresent = newStyle.bom.some((b: any) => (b.id && oldBOM.id && b.id === oldBOM.id) || b.name === oldBOM.name);
                     if (!isBOMPresent) {
-                      const logId = `del-bom-${oldBOM.id}-${Date.now()}`;
+                      const logId = `del-bom-${oldBOM.id || Date.now()}-${Date.now()}`;
                       await pool.query(
-                        `INSERT INTO deleted_configs (id, type, name, parent_path, data) 
-                         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
-                        [logId, 'bom', oldBOM.name, `${oldCat.name} › ${oldStyle.name}`, JSON.stringify({ bomItem: oldBOM, parentCategoryId: oldCat.id, parentStyleId: oldStyle.id })]
+                        `INSERT INTO deleted_configs (id, type, name, parent_path, data, deleted_by) 
+                         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING`,
+                        [logId, 'bom', oldBOM.name, `${oldCat.name} › ${oldStyle.name}`, JSON.stringify({ bomItem: oldBOM, parentCategoryId: oldCat.id, parentStyleId: oldStyle.id }), changerName]
                       );
                     } else {
                       // BOM component is still present -> check for rate changes & sub-category option deletions!
-                      const newBOM = newStyle.bom.find((b: any) => b.id === oldBOM.id);
+                      const newBOM = newStyle.bom.find((b: any) => (b.id && oldBOM.id && b.id === oldBOM.id) || b.name === oldBOM.name);
                       if (newBOM) {
-                        const changerName = req.user.name || req.user.username || 'Admin';
                         const oldHasOptions = Array.isArray(oldBOM.options) && oldBOM.options.length > 0;
                         const newHasOptions = Array.isArray(newBOM.options) && newBOM.options.length > 0;
                         
@@ -1918,13 +1972,13 @@ app.post('/api/settings/config', authenticate, async (req: any, res) => {
                         if (oldHasOptions) {
                           const newOpts = Array.isArray(newBOM.options) ? newBOM.options : [];
                           for (const oldOpt of oldBOM.options) {
-                            const isOptStillPresent = newOpts.some((o: any) => o.name === oldOpt.name);
+                            const isOptStillPresent = newOpts.some((o: any) => (o.id && oldOpt.id && o.id === oldOpt.id) || o.name === oldOpt.name);
                             if (!isOptStillPresent) {
-                              const logId = `del-opt-${oldBOM.id}-${oldOpt.name}-${Date.now()}`;
+                              const logId = `del-opt-${oldBOM.id || 'no-bom'}-${oldOpt.name}-${Date.now()}`;
                               await pool.query(
-                                `INSERT INTO deleted_configs (id, type, name, parent_path, data) 
-                                 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
-                                [logId, 'subcategory', oldOpt.name, `${oldCat.name} › ${oldStyle.name} › ${oldBOM.name}`, JSON.stringify({ option: oldOpt, parentCategoryId: oldCat.id, parentStyleId: oldStyle.id, parentBOMId: oldBOM.id })]
+                                `INSERT INTO deleted_configs (id, type, name, parent_path, data, deleted_by) 
+                                 VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING`,
+                                [logId, 'subcategory', oldOpt.name, `${oldCat.name} › ${oldStyle.name} › ${oldBOM.name}`, JSON.stringify({ option: oldOpt, parentCategoryId: oldCat.id, parentStyleId: oldStyle.id, parentBOMId: oldBOM.id }), changerName]
                               );
                             }
                           }
@@ -1935,16 +1989,16 @@ app.post('/api/settings/config', authenticate, async (req: any, res) => {
                           await pool.query(
                             `INSERT INTO rate_history (item_id, name, old_rate, new_rate, changed_by) 
                              VALUES ($1, $2, $3, $4, $5)`,
-                            [oldBOM.id, oldBOM.name, oldBOM.rate, newBOM.rate, changerName]
+                            [oldBOM.id || 'no-id', oldBOM.name, oldBOM.rate, newBOM.rate, changerName]
                           );
                         }
                         
                         // Option rate change (when options exist)
                         if (oldHasOptions && newHasOptions) {
                           for (const oldOpt of oldBOM.options) {
-                            const newOpt = newBOM.options.find((o: any) => o.name === oldOpt.name);
+                            const newOpt = newBOM.options.find((o: any) => (o.id && oldOpt.id && o.id === oldOpt.id) || o.name === oldOpt.name);
                             if (newOpt && oldOpt.rate !== newOpt.rate) {
-                              const itemId = `${oldBOM.id}::${oldOpt.name}`;
+                              const itemId = `${oldBOM.id || 'no-id'}::${oldOpt.name}`;
                               await pool.query(
                                 `INSERT INTO rate_history (item_id, name, old_rate, new_rate, changed_by) 
                                  VALUES ($1, $2, $3, $4, $5)`,
@@ -2006,7 +2060,9 @@ app.get('/api/settings/config/deleted', authenticate, async (req: any, res) => {
       type: r.type,
       name: r.name,
       parentPath: r.parent_path,
-      deletedAt: r.deleted_at
+      deletedAt: r.deleted_at,
+      deletedBy: r.deleted_by || 'System Admin',
+      data: r.data
     })));
   } catch (err) {
     console.error('Failed to fetch deleted configs', err);
@@ -2033,58 +2089,85 @@ app.post('/api/settings/config/restore/:id', authenticate, async (req: any, res)
       config.beltTypes = [];
     }
 
+    // Helper functions to find items by ID or Name
+    const findCategory = (id: string, name: string) => {
+      return config.beltTypes.find((c: any) => (id && c.id === id) || (name && c.name === name));
+    };
+
     // 3. Restore based on type
     if (delItem.type === 'category') {
-      if (!config.beltTypes.some((c: any) => c.id === data.id)) {
+      const exists = config.beltTypes.some((c: any) => (data.id && c.id === data.id) || c.name === data.name);
+      if (!exists) {
         config.beltTypes.push(data);
       } else {
-        return res.status(400).json({ error: 'Category with same ID already exists in configuration' });
+        return res.status(400).json({ error: 'Category with same ID or Name already exists in configuration' });
       }
     } else if (delItem.type === 'style') {
       const parentCategoryId = data.parentCategoryId;
       const styleObj = data.style;
-      const category = config.beltTypes.find((c: any) => c.id === parentCategoryId);
+      const category = findCategory(parentCategoryId, delItem.parent_path);
       if (!category) {
-        return res.status(400).json({ error: `Cannot restore: Parent Category does not exist anymore` });
+        return res.status(400).json({ error: `Cannot restore: Parent Category "${delItem.parent_path}" does not exist anymore` });
       }
       if (!Array.isArray(category.styles)) category.styles = [];
-      if (!category.styles.some((s: any) => s.id === styleObj.id)) {
+      const exists = category.styles.some((s: any) => (styleObj.id && s.id === styleObj.id) || s.name === styleObj.name);
+      if (!exists) {
         category.styles.push(styleObj);
       } else {
         return res.status(400).json({ error: 'Style already exists in Category' });
       }
     } else if (delItem.type === 'bom') {
       const { bomItem, parentCategoryId, parentStyleId } = data;
-      const category = config.beltTypes.find((c: any) => c.id === parentCategoryId);
+      
+      // Parse parent path e.g. "PTFE › 4X4 MESH BELT"
+      const pathParts = delItem.parent_path.split(' › ');
+      const catName = pathParts[0];
+      const styleName = pathParts[1];
+
+      const category = findCategory(parentCategoryId, catName);
       if (!category) {
-        return res.status(400).json({ error: `Cannot restore: Parent Category does not exist` });
+        return res.status(400).json({ error: `Cannot restore: Parent Category "${catName}" does not exist` });
       }
-      const style = category.styles?.find((s: any) => s.id === parentStyleId);
+      
+      const style = category.styles?.find((s: any) => (parentStyleId && s.id === parentStyleId) || (styleName && s.name === styleName));
       if (!style) {
-        return res.status(400).json({ error: `Cannot restore: Parent Style does not exist` });
+        return res.status(400).json({ error: `Cannot restore: Parent Style "${styleName}" does not exist` });
       }
+      
       if (!Array.isArray(style.bom)) style.bom = [];
-      if (!style.bom.some((b: any) => b.id === bomItem.id)) {
+      const exists = style.bom.some((b: any) => (bomItem.id && b.id === bomItem.id) || b.name === bomItem.name);
+      if (!exists) {
         style.bom.push(bomItem);
       } else {
         return res.status(400).json({ error: 'Component already exists in Style BOM' });
       }
     } else if (delItem.type === 'subcategory') {
       const { option, parentCategoryId, parentStyleId, parentBOMId } = data;
-      const category = config.beltTypes.find((c: any) => c.id === parentCategoryId);
+      
+      // Parse parent path e.g. "PTFE › 4X4 MESH BELT › RED Bodar"
+      const pathParts = delItem.parent_path.split(' › ');
+      const catName = pathParts[0];
+      const styleName = pathParts[1];
+      const bomName = pathParts[2];
+
+      const category = findCategory(parentCategoryId, catName);
       if (!category) {
-        return res.status(400).json({ error: `Cannot restore: Parent Category does not exist` });
+        return res.status(400).json({ error: `Cannot restore: Parent Category "${catName}" does not exist` });
       }
-      const style = category.styles?.find((s: any) => s.id === parentStyleId);
+      
+      const style = category.styles?.find((s: any) => (parentStyleId && s.id === parentStyleId) || (styleName && s.name === styleName));
       if (!style) {
-        return res.status(400).json({ error: `Cannot restore: Parent Style does not exist` });
+        return res.status(400).json({ error: `Cannot restore: Parent Style "${styleName}" does not exist` });
       }
-      const bomItem = style.bom?.find((b: any) => b.id === parentBOMId);
+      
+      const bomItem = style.bom?.find((b: any) => (parentBOMId && b.id === parentBOMId) || (bomName && b.name === bomName));
       if (!bomItem) {
-        return res.status(400).json({ error: `Cannot restore: Parent BOM Component does not exist` });
+        return res.status(400).json({ error: `Cannot restore: Parent BOM Component "${bomName}" does not exist` });
       }
+      
       if (!Array.isArray(bomItem.options)) bomItem.options = [];
-      if (!bomItem.options.some((o: any) => o.name === option.name)) {
+      const exists = bomItem.options.some((o: any) => (option.id && o.id === option.id) || o.name === option.name);
+      if (!exists) {
         bomItem.options.push(option);
       } else {
         return res.status(400).json({ error: 'Sub-category Option already exists in BOM Component' });
@@ -2248,7 +2331,7 @@ app.patch('/api/material-stocks/:id/refill', async (req: any, res) => {
     // Fetch current lots to append the new refilled pieces
     const currentRes = await pool.query('SELECT lots FROM material_stocks WHERE id = $1', [req.params.id]);
     let lots = [];
-    if (currentRes.rowCount > 0 && currentRes.rows[0].lots) {
+    if ((currentRes.rowCount || 0) > 0 && currentRes.rows[0].lots) {
       lots = typeof currentRes.rows[0].lots === 'string' 
         ? JSON.parse(currentRes.rows[0].lots) 
         : currentRes.rows[0].lots;
@@ -2890,7 +2973,7 @@ app.post('/api/clients', authenticate, async (req, res) => {
     const trimmedMobile = mobile ? mobile.trim() : '';
     if (trimmedMobile) {
       const existRes = await pool.query('SELECT id FROM clients WHERE mobile = $1', [trimmedMobile]);
-      if (existRes.rowCount > 0) {
+      if ((existRes.rowCount || 0) > 0) {
         return res.status(400).json({ error: 'Mobile number already registered for another client' });
       }
     }
@@ -2913,7 +2996,7 @@ app.put('/api/clients/:id', authenticate, async (req, res) => {
     const trimmedMobile = mobile ? mobile.trim() : '';
     if (trimmedMobile) {
       const existRes = await pool.query('SELECT id FROM clients WHERE mobile = $1 AND id <> $2', [trimmedMobile, req.params.id]);
-      if (existRes.rowCount > 0) {
+      if ((existRes.rowCount || 0) > 0) {
         return res.status(400).json({ error: 'Mobile number already registered for another client' });
       }
     }
@@ -2968,6 +3051,7 @@ app.get('/api/rolls', async (req, res) => {
       parentRollId: r.parent_roll_id || null,
       status: r.status || 'active',
       reorderLevel: parseFloat(r.reorder_level || 0),
+      createdAt: r.created_at || null,
       cuts: cutsRes.rows
         .filter(c => c.roll_id === r.id)
         .map(c => ({
@@ -2981,7 +3065,8 @@ app.get('/api/rolls', async (req, res) => {
           status: c.status,
           color: c.color,
           isInventoryCut: c.is_inventory_cut,
-          soNumber: c.so_number || null
+          soNumber: c.so_number || null,
+          createdAt: c.created_at || null
         }))
     }));
     res.json(rolls);
@@ -3000,6 +3085,13 @@ app.post('/api/rolls', async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived || false, computedIsReuse, parentRollId || null, status || 'active', parseFloat(reorderLevel) || 0]
     );
+    // Auto-register the materialType into custom_material_types so it appears in the Cutting System dropdown
+    if (materialType && materialType.trim()) {
+      await pool.query(
+        'INSERT INTO custom_material_types (name) VALUES ($1) ON CONFLICT (name) DO NOTHING',
+        [materialType.trim()]
+      );
+    }
     res.json({ id, materialType, fullWidth, fullLength, totalSqm, remainingSqm, isArchived: isArchived || false, isReuse: computedIsReuse, parentRollId: parentRollId || null, status: status || 'active', reorderLevel: parseFloat(reorderLevel) || 0, cuts: [] });
   } catch (err: any) {
     console.error('Failed to create roll', err);
@@ -3009,6 +3101,7 @@ app.post('/api/rolls', async (req, res) => {
     res.status(500).json({ error: 'Failed to create roll' });
   }
 });
+
 
 app.put('/api/rolls/:id', async (req, res) => {
   const { remainingSqm, status } = req.body;
@@ -3075,13 +3168,21 @@ app.patch('/api/material-type-reorders', async (req, res) => {
 // GET custom material types
 app.get('/api/material-types', async (req, res) => {
   try {
-    const result = await pool.query('SELECT name FROM custom_material_types ORDER BY name ASC');
+    // Merge custom_material_types with all distinct material types already saved in rolls
+    // This ensures rolls added without going through the Cutting System still appear in the dropdown
+    const result = await pool.query(`
+      SELECT name FROM custom_material_types
+      UNION
+      SELECT DISTINCT material_type AS name FROM rolls WHERE material_type IS NOT NULL AND material_type <> ''
+      ORDER BY name ASC
+    `);
     res.json(result.rows.map(r => r.name));
   } catch (err) {
     console.error('Failed to fetch custom material types', err);
     res.status(500).json({ error: 'Failed to fetch custom material types' });
   }
 });
+
 
 // POST custom material type
 app.post('/api/material-types', async (req, res) => {
@@ -3597,6 +3698,178 @@ app.post('/api/audit-logs', authenticate, async (req: any, res) => {
   } catch (err) {
     console.error('Failed to create audit log', err);
     res.status(500).json({ error: 'Failed to create audit log' });
+  }
+});
+
+// Margin Requests Routes
+app.get('/api/margin-requests', authenticate, async (req: any, res) => {
+  try {
+    let query = 'SELECT * FROM margin_requests';
+    const params: any[] = [];
+    
+    // Non-admin users only see requests they created
+    if (req.user.role !== 'admin') {
+      query += ' WHERE requested_by = $1';
+      params.push(req.user.id);
+    }
+    
+    query += ' ORDER BY created_at DESC';
+    const result = await pool.query(query, params);
+    
+    res.json(result.rows.map(row => ({
+      id: row.id,
+      clientId: row.client_id,
+      clientName: row.client_name,
+      beltType: row.belt_type,
+      beltStyle: row.belt_style,
+      requestedBy: row.requested_by,
+      requestedByName: row.requested_by_name,
+      status: row.status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      length: row.length,
+      width: row.width,
+      lengthUnit: row.length_unit,
+      widthUnit: row.width_unit
+    })));
+  } catch (err) {
+    console.error('Failed to retrieve margin requests', err);
+    res.status(500).json({ error: 'Failed to retrieve margin requests' });
+  }
+});
+
+app.post('/api/margin-requests', authenticate, async (req: any, res) => {
+  const { clientId, clientName, beltType, beltStyle, length, width, lengthUnit, widthUnit } = req.body;
+  if (!clientId || !clientName || !beltType || !beltStyle) {
+    return res.status(400).json({ error: 'Missing required parameters' });
+  }
+  try {
+    // Check if there is already a pending request for this client + style
+    const checkRes = await pool.query(
+      "SELECT id FROM margin_requests WHERE client_id = $1 AND belt_type = $2 AND belt_style = $3 AND status = 'pending'",
+      [clientId, beltType, beltStyle]
+    );
+    if ((checkRes.rowCount || 0) > 0) {
+      return res.status(400).json({ error: 'A pending margin request already exists for this client and style.' });
+    }
+
+    const id = 'mr-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const now = new Date();
+    await pool.query(
+      `INSERT INTO margin_requests (id, client_id, client_name, belt_type, belt_style, requested_by, requested_by_name, status, created_at, updated_at, length, width, length_unit, width_unit)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $8, $9, $10, $11, $12)`,
+      [id, clientId, clientName, beltType, beltStyle, req.user.id, req.user.name || req.user.username, now, length, width, lengthUnit, widthUnit]
+    );
+
+    res.json({ id, success: true });
+  } catch (err) {
+    console.error('Failed to create margin request', err);
+    res.status(500).json({ error: 'Failed to create margin request' });
+  }
+});
+
+app.post('/api/margin-requests/:id/approve', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { id } = req.params;
+  const { margin } = req.body;
+  
+  if (margin === undefined || isNaN(parseFloat(margin)) || parseFloat(margin) < 0) {
+    return res.status(400).json({ error: 'Valid margin percentage is required' });
+  }
+
+  try {
+    const reqRes = await pool.query('SELECT * FROM margin_requests WHERE id = $1', [id]);
+    if (!reqRes.rowCount || reqRes.rowCount === 0) return res.status(404).json({ error: 'Request not found' });
+    const request = reqRes.rows[0];
+
+    if (request.status !== 'pending') {
+      return res.status(400).json({ error: 'Request is already processed' });
+    }
+
+    const clientId = request.client_id;
+    const beltType = request.belt_type;
+    const beltStyle = request.belt_style;
+
+    // Fetch and update client profit margins
+    const clientRes = await pool.query('SELECT profit_margins FROM clients WHERE id = $1', [clientId]);
+    if ((clientRes.rowCount || 0) > 0) {
+      let margins = clientRes.rows[0].profit_margins;
+      if (typeof margins === 'string') margins = JSON.parse(margins);
+      if (!margins) margins = {};
+      if (!margins[beltType]) margins[beltType] = {};
+      
+      // Set the margin range: 0 to infinity (null) with the specified margin
+      margins[beltType][beltStyle] = [{ minLength: 0, maxLength: null, margin: parseFloat(margin) }];
+      
+      await pool.query('UPDATE clients SET profit_margins = $1 WHERE id = $2', [JSON.stringify(margins), clientId]);
+    } else {
+      return res.status(404).json({ error: 'Associated client not found' });
+    }
+
+    const now = new Date();
+    await pool.query(
+      "UPDATE margin_requests SET status = 'approved', updated_at = $1 WHERE id = $2",
+      [now, id]
+    );
+
+    // Audit log
+    const auditId = Date.now().toString();
+    await pool.query(
+      'INSERT INTO audit_logs (id, timestamp, user_id, user_name, action, details) VALUES ($1, $2, $3, $4, $5, $6)',
+      [
+        auditId, 
+        now, 
+        req.user.id, 
+        req.user.name || req.user.username, 
+        'MARGIN_REQUEST_APPROVED', 
+        `Approved margin request for Client: ${request.client_name}, Style: ${beltType} (${beltStyle}) with margin ${margin}%`
+      ]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to approve margin request', err);
+    res.status(500).json({ error: 'Failed to approve margin request' });
+  }
+});
+
+app.post('/api/margin-requests/:id/reject', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { id } = req.params;
+  
+  try {
+    const reqRes = await pool.query('SELECT * FROM margin_requests WHERE id = $1', [id]);
+    if (reqRes.rowCount === 0) return res.status(404).json({ error: 'Request not found' });
+    const request = reqRes.rows[0];
+
+    if (request.status !== 'pending') {
+      return res.status(400).json({ error: 'Request is already processed' });
+    }
+
+    const now = new Date();
+    await pool.query(
+      "UPDATE margin_requests SET status = 'rejected', updated_at = $1 WHERE id = $2",
+      [now, id]
+    );
+
+    // Audit log
+    const auditId = Date.now().toString();
+    await pool.query(
+      'INSERT INTO audit_logs (id, timestamp, user_id, user_name, action, details) VALUES ($1, $2, $3, $4, $5, $6)',
+      [
+        auditId, 
+        now, 
+        req.user.id, 
+        req.user.name || req.user.username, 
+        'MARGIN_REQUEST_REJECTED', 
+        `Rejected margin request for Client: ${request.client_name}, Style: ${request.belt_type} (${request.belt_style})`
+      ]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to reject margin request', err);
+    res.status(500).json({ error: 'Failed to reject margin request' });
   }
 });
 

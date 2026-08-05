@@ -32,14 +32,14 @@ const formatLocalDate = (date: Date): string => {
 export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
-  const [activeReportCard, setActiveReportCard] = useState<'purchase' | 'profitability' | 'company' | 'inventory' | null>(null);
+  const [activeReportCard, setActiveReportCard] = useState<'overview' | 'purchase' | 'profitability' | 'company' | 'inventory' | null>(null);
   const [selectedPreset, setSelectedPreset] = useState<string>('this-month');
   const [selectedCompany, setSelectedCompany] = useState<string>('all');
   const [selectedOrderForModal, setSelectedOrderForModal] = useState<Quotation | null>(null);
 
   // Date range dialog state
   const [showDateRangeDialog, setShowDateRangeDialog] = useState(false);
-  const [pendingReportCard, setPendingReportCard] = useState<'purchase' | 'profitability' | 'company' | 'inventory' | null>(null);
+  const [pendingReportCard, setPendingReportCard] = useState<'overview' | 'purchase' | 'profitability' | 'company' | 'inventory' | null>(null);
   const [dialogStartDate, setDialogStartDate] = useState<string>('');
   const [dialogEndDate, setDialogEndDate] = useState<string>('');
   const [dialogPreset, setDialogPreset] = useState<string>('this-month');
@@ -47,6 +47,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
   // Inventory (rolls) state
   const [rolls, setRolls] = useState<any[]>([]);
   const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
+  const [inventoryViewMode, setInventoryViewMode] = useState<'table' | 'grid'>('table');
 
   // Default date range: current month start to today
   const [startDate, setStartDate] = useState<string>(() => {
@@ -94,6 +95,10 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
         start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30);
         end = new Date();
         break;
+      case 'all':
+        start = new Date(1970, 0, 1);
+        end = new Date();
+        break;
       default:
         return;
     }
@@ -120,7 +125,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
   }, []);
 
   // Helper: open date range dialog for a specific report
-  const openReportWithDatePicker = (card: 'purchase' | 'profitability' | 'company' | 'inventory') => {
+  const openReportWithDatePicker = (card: 'overview' | 'purchase' | 'profitability' | 'company') => {
     setPendingReportCard(card);
     const today = new Date();
     const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -141,6 +146,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       case 'this-month': start = new Date(today.getFullYear(), today.getMonth(), 1); end = new Date(); break;
       case 'last-month': start = new Date(today.getFullYear(), today.getMonth() - 1, 1); end = new Date(today.getFullYear(), today.getMonth(), 0); break;
       case 'last-30-days': start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30); end = new Date(); break;
+      case 'all': start = new Date(1970, 0, 1); end = new Date(); break;
       default: return;
     }
     setDialogStartDate(formatLocalDate(start));
@@ -157,32 +163,20 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
     setShowDateRangeDialog(false);
   };
 
-  // Inventory: group rolls by materialType
-  const inventoryByProduct = useMemo((): Record<string, { rolls: any[]; totalRemaining: number; totalSqm: number }> => {
-    const active = rolls.filter(r => !r.isArchived && r.status !== 'refused');
-    const map: Record<string, { rolls: any[]; totalRemaining: number; totalSqm: number }> = {};
-    active.forEach(r => {
-      const key = r.materialType || 'Unknown';
-      if (!map[key]) map[key] = { rolls: [], totalRemaining: 0, totalSqm: 0 };
-      map[key].rolls.push(r);
-      map[key].totalRemaining += r.remainingSqm || 0;
-      map[key].totalSqm += r.totalSqm || 0;
-    });
-    return map;
-  }, [rolls]);
-
   // Filter orders and calculate costs on-the-fly
   const filteredOrders = useMemo(() => {
     const orders = quotations.filter(q => q.status === 'order' || q.status === 'executed');
-    if (!startDate && !endDate) return [];
+    
+    if (selectedPreset !== 'all' && !startDate && !endDate) return [];
 
-    const start = startDate ? new Date(startDate) : new Date(0);
+    const start = selectedPreset === 'all' ? new Date(0) : (startDate ? new Date(startDate) : new Date(0));
     start.setHours(0, 0, 0, 0);
-    const end = endDate ? new Date(endDate) : new Date();
+    const end = selectedPreset === 'all' ? new Date() : (endDate ? new Date(endDate) : new Date());
     end.setHours(23, 59, 59, 999);
 
     return orders
       .filter(q => {
+        if (selectedPreset === 'all') return true;
         const orderDate = q.updatedAt || q.createdAt;
         if (!orderDate) return false;
         const qDate = convertToDate(orderDate);
@@ -211,7 +205,14 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
         }
 
         const client = clients?.find(c => c.id === q.clientId) || null;
-        const clientProfitRanges = client?.profitMargins?.[q.beltType] || [];
+        const typeData = client?.profitMargins?.[q.beltType];
+        const clientProfitRanges: import('../types').ProfitRange[] = (() => {
+          if (!typeData) return [];
+          if (!Array.isArray(typeData) && typeof typeData === 'object') {
+            return Array.isArray(typeData[q.beltStyle]) ? typeData[q.beltStyle] : [];
+          }
+          return Array.isArray(typeData) ? typeData : [];
+        })();
         const category = config?.beltTypes?.find(t => t.name === q.beltType) || null;
         const style = category?.styles?.find(s => s.name === q.beltStyle) || null;
 
@@ -268,7 +269,74 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
         };
       })
       .sort((a, b) => convertToDate(b.updatedAt || b.createdAt).getTime() - convertToDate(a.updatedAt || a.createdAt).getTime());
-  }, [quotations, startDate, endDate, config, clients]);
+  }, [quotations, startDate, endDate, config, clients, selectedPreset]);
+
+const getCutDate = (cut: any): Date | null => {
+  if (cut.createdAt) {
+    const d = new Date(cut.createdAt);
+    if (!isNaN(d.getTime())) return d;
+  }
+  if (cut.date) {
+    const d = new Date(cut.date);
+    if (!isNaN(d.getTime())) return d;
+  }
+  if (cut.id && typeof cut.id === 'string' && cut.id.includes('-')) {
+    const parts = cut.id.split('-');
+    if (parts.length >= 2) {
+      const ts = parseInt(parts[1], 10);
+      if (!isNaN(ts) && ts > 1000000000000) {
+        return new Date(ts);
+      }
+    }
+  }
+  return null;
+};
+
+  // Inventory: group rolls by materialType with date range cut statistics
+  const inventoryByProduct = useMemo(() => {
+    const active = rolls.filter(r => !r.isArchived && r.status !== 'refused');
+    const filteredOrderIds = new Set(filteredOrders.map(o => o.id));
+    const filteredOrderNumbers = new Set(filteredOrders.map(o => `#${o.orderNumber || ''}`));
+
+    const start = selectedPreset === 'all' ? new Date(0) : (startDate ? new Date(startDate) : new Date(0));
+    start.setHours(0, 0, 0, 0);
+    const end = selectedPreset === 'all' ? new Date() : (endDate ? new Date(endDate) : new Date());
+    end.setHours(23, 59, 59, 999);
+
+    const map: Record<string, { rolls: any[]; totalRemaining: number; totalSqm: number; totalSqmCutInRange: number; totalCutsInRange: number }> = {};
+    active.forEach(r => {
+      const key = r.materialType || 'Unknown';
+      if (!map[key]) map[key] = { rolls: [], totalRemaining: 0, totalSqm: 0, totalSqmCutInRange: 0, totalCutsInRange: 0 };
+      
+      const cutsInRange = (r.cuts || []).filter((cut: any) => {
+        if (selectedPreset === 'all') return true;
+        const cDate = getCutDate(cut);
+        if (cDate) {
+          return cDate >= start && cDate <= end;
+        }
+        if (cut.orderId && (filteredOrderIds.has(cut.orderId) || filteredOrderNumbers.has(cut.orderId))) {
+          return true;
+        }
+        return false;
+      });
+
+      const sqmCutInRange = cutsInRange.reduce((sum: number, c: any) => sum + ((c.width || 0) * (c.length || 0)), 0);
+
+      const rollWithStats = {
+        ...r,
+        cutsInRange,
+        sqmCutInRange,
+        cutsCountInRange: cutsInRange.length
+      };
+
+      map[key].rolls.push(rollWithStats);
+      map[key].totalRemaining += r.remainingSqm || 0;
+      map[key].totalSqm += r.totalSqm || 0;
+      map[key].totalSqmCutInRange += sqmCutInRange;
+      map[key].totalCutsInRange += cutsInRange.length;
+    });
+    return map;
+  }, [rolls, filteredOrders, selectedPreset, startDate, endDate]);
 
   // Aggregated calculations for Reports
   const totalMaterialSubtotal = useMemo(() => {
@@ -314,7 +382,6 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       if (activeCompaniesList.includes(compName)) {
         map[compName] = (map[compName] || 0) + o.totalCost;
       } else {
-        // Add to default/first company if not matching
         const defaultComp = activeCompaniesList[0] || 'Pooja Tekno Belt';
         map[defaultComp] = (map[defaultComp] || 0) + o.totalCost;
       }
@@ -336,13 +403,27 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       }
     }
 
+    const reportTitle = activeReportCard === 'purchase' ? 'PURCHASE COST REPORT'
+      : activeReportCard === 'profitability' ? 'PROFITABILITY REPORT'
+      : activeReportCard === 'company' ? 'COMPANY SALES REPORT'
+      : 'ROLL BALANCE REPORT';
+
+    const dateRangeLabel = selectedPreset === 'all' ? 'All Time' : `${startDate || 'Start'} to ${endDate || 'Today'}`;
+
+    const metadataRows: string[][] = [
+      ['REPORT NAME', reportTitle],
+      ['DATE RANGE', dateRangeLabel],
+      ['EXPORTED AT', new Date().toLocaleString('en-IN')],
+      []
+    ];
+
     let headers: string[] = [];
     let rows: string[][] = [];
 
     if (activeReportCard === 'purchase') {
       headers = ['Order ID', 'Date', 'Client', 'Material Subtotal'];
       rows = filteredOrders.map(o => [
-        `#${(o as any).orderNumber || ''}`,
+        `#${o.orderNumber || ''}`,
         convertToDate(o.updatedAt || o.createdAt).toLocaleDateString('en-IN'),
         o.clientName,
         Math.round(o.calculated?.summary?.subtotal || 0).toString()
@@ -351,7 +432,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
     } else if (activeReportCard === 'profitability') {
       headers = ['Order ID', 'Date', 'Client', 'Base Price', 'Profit Margin (Cash)', 'Profit Margin (%)'];
       rows = filteredOrders.map(o => [
-        `#${(o as any).orderNumber || ''}`,
+        `#${o.orderNumber || ''}`,
         convertToDate(o.updatedAt || o.createdAt).toLocaleDateString('en-IN'),
         o.clientName,
         Math.round(o.calculated?.summary?.totalWithProfit || 0).toString(),
@@ -362,7 +443,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
     } else if (activeReportCard === 'company') {
       headers = ['Order ID', 'Date', 'Client', 'Company', 'Final Selling Price'];
       rows = displayOrders.map(o => [
-        `#${(o as any).orderNumber || ''}`,
+        `#${o.orderNumber || ''}`,
         convertToDate(o.updatedAt || o.createdAt).toLocaleDateString('en-IN'),
         o.clientName,
         o.company || 'Pooja Tekno Belt',
@@ -371,7 +452,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       const grandTotalFinal = displayOrders.reduce((sum, o) => sum + o.totalCost, 0);
       rows.push(['GRAND TOTAL', '', '', '', Math.round(grandTotalFinal).toString()]);
     } else if (activeReportCard === 'inventory') {
-      headers = ['S.No', 'Product Name / Roll Details', 'Status', 'Active Rolls', 'Total Remaining (sqm)', 'Total Original (sqm)', 'Remaining %', 'Used %'];
+      headers = ['S.No', 'Product Name / Roll Details', 'Status', 'Active Rolls', 'Sqm Cut In Date Range', 'Cuts Count In Range', 'Total Remaining (sqm)', 'Total Original (sqm)', 'Remaining %', 'Used %'];
       rows = [];
       
       inventoryEntries.forEach(([product, data], index) => {
@@ -384,6 +465,8 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
           product,
           'PRODUCT TOTAL',
           data.rolls.length.toString(),
+          (data.totalSqmCutInRange || 0).toFixed(2),
+          (data.totalCutsInRange || 0).toString(),
           data.totalRemaining.toFixed(2),
           data.totalSqm.toFixed(2),
           `${remainingPct.toFixed(1)}%`,
@@ -400,6 +483,8 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
             `  └ Roll #${idx + 1} (${roll.id ? roll.id.substring(0, 6) : ''}) [${dims}]`,
             roll.isReuse ? 'Reuse' : 'Active',
             '1',
+            (roll.sqmCutInRange || 0).toFixed(2),
+            (roll.cutsCountInRange || 0).toString(),
             (roll.remainingSqm || 0).toFixed(2),
             (roll.totalSqm || 0).toFixed(2),
             `${rRemainingPct.toFixed(1)}%`,
@@ -410,6 +495,8 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
 
       const grandTotalRemaining = inventoryValues.reduce((s, d) => s + d.totalRemaining, 0);
       const grandTotalOriginal = inventoryValues.reduce((s, d) => s + d.totalSqm, 0);
+      const grandTotalSqmCut = inventoryValues.reduce((s, d) => s + (d.totalSqmCutInRange || 0), 0);
+      const grandTotalCuts = inventoryValues.reduce((s, d) => s + (d.totalCutsInRange || 0), 0);
       const totalRollsCount = rolls.filter(r => !r.isArchived && r.status !== 'refused').length;
       const grandRemainingPct = grandTotalOriginal > 0 ? (grandTotalRemaining / grandTotalOriginal) * 100 : 0;
       
@@ -418,6 +505,8 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
         'All Active Inventory Products',
         '-',
         totalRollsCount.toString(),
+        grandTotalSqmCut.toFixed(2),
+        grandTotalCuts.toString(),
         grandTotalRemaining.toFixed(2),
         grandTotalOriginal.toFixed(2),
         `${grandRemainingPct.toFixed(1)}%`,
@@ -425,15 +514,17 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       ]);
     }
 
-    const csvContent = [headers, ...rows]
-      .map(e => e.map(val => `"${val.replace(/"/g, '""')}"`).join(","))
+    const csvContent = [...metadataRows, headers, ...rows]
+      .map(e => e.map(val => `"${(val || '').toString().replace(/"/g, '""')}"`).join(","))
       .join("\n");
     const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
     const fileNameCard = activeReportCard === 'inventory' ? 'roll_balance' : activeReportCard;
-    link.download = `${fileNameCard}_report_${startDate}_to_${endDate}.csv`;
+    const safeStart = startDate || 'all';
+    const safeEnd = endDate || 'time';
+    link.download = `${fileNameCard}_report_${safeStart}_to_${safeEnd}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -470,7 +561,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       tableHeaders = '<th>Order ID</th><th>Date</th><th>Client</th><th style="text-align: right;">Material Subtotal</th>';
       tableRows = filteredOrders.map(o => `
         <tr>
-          <td>#${(o as any).orderNumber || ''}</td>
+          <td>#${o.orderNumber || ''}</td>
           <td>${convertToDate(o.updatedAt || o.createdAt).toLocaleDateString('en-IN')}</td>
           <td>${o.clientName}</td>
           <td style="text-align: right;">${formatCurrency(o.calculated?.summary?.subtotal || 0)}</td>
@@ -482,7 +573,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       tableHeaders = '<th>Order ID</th><th>Date</th><th>Client</th><th style="text-align: right;">Base Price</th><th style="text-align: right;">Profit Margin (₹)</th><th style="text-align: right;">Profit Margin (%)</th>';
       tableRows = filteredOrders.map(o => `
         <tr>
-          <td>#${(o as any).orderNumber || ''}</td>
+          <td>#${o.orderNumber || ''}</td>
           <td>${convertToDate(o.updatedAt || o.createdAt).toLocaleDateString('en-IN')}</td>
           <td>${o.clientName}</td>
           <td style="text-align: right;">${formatCurrency(o.calculated?.summary?.totalWithProfit || 0)}</td>
@@ -500,7 +591,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       tableHeaders = '<th>Order ID</th><th>Date</th><th>Client</th><th>Company</th><th style="text-align: right;">Final Selling Price</th>';
       tableRows = displayOrders.map(o => `
         <tr>
-          <td>#${(o as any).orderNumber || ''}</td>
+          <td>#${o.orderNumber || ''}</td>
           <td>${convertToDate(o.updatedAt || o.createdAt).toLocaleDateString('en-IN')}</td>
           <td>${o.clientName}</td>
           <td>${o.company || 'Pooja Tekno Belt'}</td>
@@ -602,14 +693,14 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
     printWindow.document.close();
   };
 
-  const inventoryEntries = Object.entries(inventoryByProduct) as [string, { rolls: any[]; totalRemaining: number; totalSqm: number }][];
-  const inventoryValues = Object.values(inventoryByProduct) as { rolls: any[]; totalRemaining: number; totalSqm: number }[];
+  const inventoryEntries = Object.entries(inventoryByProduct) as [string, { rolls: any[]; totalRemaining: number; totalSqm: number; totalSqmCutInRange?: number; totalCutsInRange?: number }][];
+  const inventoryValues = Object.values(inventoryByProduct) as { rolls: any[]; totalRemaining: number; totalSqm: number; totalSqmCutInRange?: number; totalCutsInRange?: number }[];
 
   return (
     <div className="space-y-6 w-full pb-8">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-200 pb-4">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-zinc-950 rounded-xl text-white shadow-md">
+          <div className="p-2.5 bg-[#1e3a8a] rounded-xl text-white shadow-md">
             <BarChart3 className="h-6 w-6" />
           </div>
           <div>
@@ -620,104 +711,107 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       </div>
 
       {/* ── PERSISTENT FILTER BAR ── */}
-      <Card className="border-zinc-200 bg-white/80 backdrop-blur-md shadow-sm rounded-2xl overflow-hidden">
-        <CardContent className="p-4 flex flex-col xl:flex-row items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
-            <span className="text-xs font-black uppercase text-zinc-400 tracking-wider mr-2 flex items-center gap-1">
-              <Calendar size={14} /> Date Range:
-            </span>
-            {[
-              { id: 'today', label: 'Today' },
-              { id: 'yesterday', label: 'Yesterday' },
-              { id: 'this-week', label: 'This Week' },
-              { id: 'this-month', label: 'This Month' },
-              { id: 'last-month', label: 'Last Month' },
-              { id: 'last-30-days', label: '30 Days' },
-            ].map(preset => (
-              <button
-                key={preset.id}
-                type="button"
-                onClick={() => {
-                  handlePresetClick(preset.id);
-                  setSelectedPreset(preset.id);
-                }}
-                className={cn(
-                  "py-1.5 px-3 rounded-lg border text-xs font-bold transition-all duration-200 cursor-pointer",
-                  selectedPreset === preset.id
-                    ? "bg-zinc-950 text-white border-zinc-950 shadow-sm"
-                    : "bg-zinc-50 border-zinc-200 text-zinc-650 hover:bg-zinc-105 hover:border-zinc-300"
-                )}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-          
-          <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-end">
-            <div className="flex items-center gap-2">
-              <Input
-                type="date"
-                value={startDate}
-                onChange={(e) => {
-                  setStartDate(e.target.value);
-                  setSelectedPreset('custom');
-                }}
-                className="bg-white border-zinc-300 focus:ring-zinc-950 text-xs font-semibold h-9 w-36 rounded-lg px-2"
-              />
-              <span className="text-zinc-400 text-xs font-bold">to</span>
-              <Input
-                type="date"
-                value={endDate}
-                onChange={(e) => {
-                  setEndDate(e.target.value);
-                  setSelectedPreset('custom');
-                }}
-                className="bg-white border-zinc-300 focus:ring-zinc-950 text-xs font-semibold h-9 w-36 rounded-lg px-2"
-              />
+      {activeReportCard !== null && (
+        <Card className="border-zinc-200 bg-white/80 backdrop-blur-md shadow-sm rounded-2xl overflow-hidden">
+          <CardContent className="p-4 flex flex-col xl:flex-row items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+              <span className="text-xs font-black uppercase text-zinc-400 tracking-wider mr-2 flex items-center gap-1">
+                <Calendar size={14} /> Date Range:
+              </span>
+              {[
+                { id: 'today', label: 'Today' },
+                { id: 'yesterday', label: 'Yesterday' },
+                { id: 'this-week', label: 'This Week' },
+                { id: 'this-month', label: 'This Month' },
+                { id: 'last-month', label: 'Last Month' },
+                { id: 'last-30-days', label: '30 Days' },
+                { id: 'all', label: 'All' },
+              ].map(preset => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => {
+                    handlePresetClick(preset.id);
+                    setSelectedPreset(preset.id);
+                  }}
+                  className={cn(
+                    "py-1.5 px-3 rounded-lg border text-xs font-bold transition-all duration-200 cursor-pointer",
+                    selectedPreset === preset.id
+                      ? "bg-[#1e3a8a] text-white border-zinc-950 shadow-sm"
+                      : "bg-zinc-50 border-zinc-200 text-zinc-650 hover:bg-zinc-105 hover:border-zinc-300"
+                  )}
+                >
+                  {preset.label}
+                </button>
+              ))}
             </div>
-
-            {activeReportCard && (
-              <div className="flex items-center gap-2 border-t sm:border-t-0 sm:border-l border-zinc-200 pt-2 sm:pt-0 sm:pl-3 w-full sm:w-auto justify-end">
-                <Button
-                  onClick={handleExportCSV}
-                  className="bg-zinc-900 hover:bg-zinc-800 text-white h-9 text-xs font-bold px-3.5 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm"
-                >
-                  <Download size={13} /> Export CSV
-                </Button>
-                <Button
-                  onClick={handlePrintReport}
-                  className="bg-zinc-900 hover:bg-zinc-800 text-white h-9 text-xs font-bold px-3.5 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm"
-                >
-                  <Printer size={13} /> Print
-                </Button>
+            
+            <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-end">
+              <div className="flex items-center gap-2">
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => {
+                    setStartDate(e.target.value);
+                    setSelectedPreset('custom');
+                  }}
+                  className="bg-white border-zinc-300 focus:ring-zinc-950 text-xs font-semibold h-9 w-36 rounded-lg px-2"
+                />
+                <span className="text-zinc-400 text-xs font-bold">to</span>
+                <Input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => {
+                    setEndDate(e.target.value);
+                    setSelectedPreset('custom');
+                  }}
+                  className="bg-white border-zinc-300 focus:ring-zinc-950 text-xs font-semibold h-9 w-36 rounded-lg px-2"
+                />
               </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+
+              {activeReportCard && activeReportCard !== 'overview' && (
+                <div className="flex items-center gap-2 border-t sm:border-t-0 sm:border-l border-zinc-200 pt-2 sm:pt-0 sm:pl-3 w-full sm:w-auto justify-end">
+                  <Button
+                    onClick={handleExportCSV}
+                    className="bg-[#1e40af] hover:bg-[#1d4ed8] text-white h-9 text-xs font-bold px-3.5 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    <Download size={13} /> Export CSV
+                  </Button>
+                  <Button
+                    onClick={handlePrintReport}
+                    className="bg-[#1e40af] hover:bg-[#1d4ed8] text-white h-9 text-xs font-bold px-3.5 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    <Printer size={13} /> Print
+                  </Button>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── TOP: Five dynamic navigation cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         
         {/* Card 0: Overview Dashboard */}
-        <button type="button" onClick={() => { setActiveReportCard(null); setSelectedCompany('all'); }}
+        <button type="button" onClick={() => openReportWithDatePicker('overview')}
           className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-3 shadow-sm hover:shadow-md ${
-            activeReportCard === null ? 'bg-zinc-950 border-zinc-950 text-white shadow-lg scale-[1.01]' : 'bg-white border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50/50'
+            activeReportCard === 'overview' ? 'bg-[#1e3a8a] border-zinc-950 text-white shadow-lg scale-[1.01]' : 'bg-white border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50/50'
           }`}>
-          <div className={`p-2.5 rounded-xl shrink-0 transition-transform group-hover:scale-110 ${activeReportCard === null ? 'bg-white/10' : 'bg-zinc-100'}`}>
-            <BarChart3 size={18} className={activeReportCard === null ? 'text-white' : 'text-zinc-700'} />
+          <div className={`p-2.5 rounded-xl shrink-0 transition-transform group-hover:scale-110 ${activeReportCard === 'overview' ? 'bg-white/10' : 'bg-zinc-100'}`}>
+            <BarChart3 size={18} className={activeReportCard === 'overview' ? 'text-white' : 'text-zinc-700'} />
           </div>
           <div>
-            <p className={`text-[9px] font-black uppercase tracking-wider ${activeReportCard === null ? 'text-zinc-400' : 'text-zinc-500'}`}>Main</p>
-            <h3 className={`text-sm font-black leading-snug mt-0.5 ${activeReportCard === null ? 'text-white' : 'text-zinc-950'}`}>Overview</h3>
-            <p className={`text-[9px] font-bold mt-0.5 leading-normal ${activeReportCard === null ? 'text-zinc-400' : 'text-zinc-500'}`}>Dashboard & KPIs</p>
+            <p className={`text-[9px] font-black uppercase tracking-wider ${activeReportCard === 'overview' ? 'text-zinc-400' : 'text-zinc-500'}`}>Main</p>
+            <h3 className={`text-sm font-black leading-snug mt-0.5 ${activeReportCard === 'overview' ? 'text-white' : 'text-zinc-950'}`}>Overview</h3>
+            <p className={`text-[9px] font-bold mt-0.5 leading-normal ${activeReportCard === 'overview' ? 'text-zinc-400' : 'text-zinc-500'}`}>Dashboard & KPIs</p>
           </div>
         </button>
 
         {/* Card 1: Purchase Cost */}
         <button type="button" onClick={() => openReportWithDatePicker('purchase')}
           className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-3 shadow-sm hover:shadow-md ${
-            activeReportCard === 'purchase' ? 'bg-zinc-950 border-zinc-950 text-white shadow-lg scale-[1.01]' : 'bg-white border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50/50'
+            activeReportCard === 'purchase' ? 'bg-[#1e3a8a] border-zinc-950 text-white shadow-lg scale-[1.01]' : 'bg-white border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50/50'
           }`}>
           <div className={`p-2.5 rounded-xl shrink-0 transition-transform group-hover:scale-110 ${activeReportCard === 'purchase' ? 'bg-white/10' : 'bg-zinc-100'}`}>
             <IndianRupee size={18} className={activeReportCard === 'purchase' ? 'text-white' : 'text-zinc-700'} />
@@ -782,28 +876,30 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
           <DialogHeader>
             <DialogTitle className="text-base font-black flex items-center gap-2">
               <Calendar size={18} />
-              Date Range Select Karein
+              Select Date Range
             </DialogTitle>
             <DialogDescription className="text-xs text-zinc-400">
-              {pendingReportCard === 'purchase' && 'Purchase Cost Report ke liye date range select karein'}
-              {pendingReportCard === 'profitability' && 'Order Profitability Report ke liye date range select karein'}
-              {pendingReportCard === 'company' && 'Company Sales Report ke liye date range select karein'}
+              {pendingReportCard === 'overview' && 'Select date range for Overview Report'}
+              {pendingReportCard === 'purchase' && 'Select date range for Purchase Cost Report'}
+              {pendingReportCard === 'profitability' && 'Select date range for Order Profitability Report'}
+              {pendingReportCard === 'company' && 'Select date range for Company Sales Report'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="flex flex-wrap gap-2">
               {[
-                { id: 'today', label: 'Aaj' },
-                { id: 'yesterday', label: 'Kal' },
-                { id: 'this-week', label: 'Is Hafte' },
-                { id: 'this-month', label: 'Is Mahine' },
-                { id: 'last-month', label: 'Pichle Mahine' },
-                { id: 'last-30-days', label: '30 Din' },
+                { id: 'today', label: 'Today' },
+                { id: 'yesterday', label: 'Yesterday' },
+                { id: 'this-week', label: 'This Week' },
+                { id: 'this-month', label: 'This Month' },
+                { id: 'last-month', label: 'Last Month' },
+                { id: 'last-30-days', label: '30 Days' },
+                { id: 'all', label: 'All' },
               ].map(p => (
                 <button key={p.id} type="button"
                   onClick={() => handleDialogPreset(p.id)}
                   className={cn('py-1.5 px-3 rounded-lg border text-xs font-bold transition-all cursor-pointer',
-                    dialogPreset === p.id ? 'bg-zinc-950 text-white border-zinc-950' : 'bg-zinc-50 border-zinc-200 text-zinc-600 hover:bg-zinc-100'
+                    dialogPreset === p.id ? 'bg-[#1e3a8a] text-white border-zinc-950' : 'bg-zinc-50 border-zinc-200 text-zinc-600 hover:bg-zinc-100'
                   )}>
                   {p.label}
                 </button>
@@ -811,24 +907,24 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-zinc-600">Shuru Ki Tarikh</Label>
+                <Label className="text-xs font-bold text-zinc-600">Start Date</Label>
                 <Input type="date" value={dialogStartDate} onChange={e => { setDialogStartDate(e.target.value); setDialogPreset('custom'); }} className="h-9 text-sm" />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-zinc-600">Khatam Ki Tarikh</Label>
+                <Label className="text-xs font-bold text-zinc-600">End Date</Label>
                 <Input type="date" value={dialogEndDate} onChange={e => { setDialogEndDate(e.target.value); setDialogPreset('custom'); }} className="h-9 text-sm" />
               </div>
             </div>
             {dialogStartDate && dialogEndDate && (
               <div className="bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-xs font-semibold text-zinc-600">
-                📅 {new Date(dialogStartDate).toLocaleDateString('en-IN')} se {new Date(dialogEndDate).toLocaleDateString('en-IN')} tak
+                📅 {dialogPreset === 'all' ? 'All Time' : `From ${new Date(dialogStartDate).toLocaleDateString('en-IN')} to ${new Date(dialogEndDate).toLocaleDateString('en-IN')}`}
               </div>
             )}
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" className="h-9 text-xs" onClick={() => setShowDateRangeDialog(false)}>Cancel</Button>
             <Button className="h-9 text-xs gap-1.5" onClick={confirmReportDateRange}>
-              <BarChart3 size={13} /> Report Dekho
+              <BarChart3 size={13} /> View Report
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -836,6 +932,8 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
 
       {/* ── BOTTOM CONTENT ── */}
       {activeReportCard === null ? (
+        null
+      ) : activeReportCard === 'overview' ? (
         /* Executive Overview Tab */
         <div className="space-y-6 animate-in fade-in slide-in-from-top-3 duration-300">
           
@@ -995,53 +1093,69 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
           </div>
 
           {/* ── INFO CARD: Reporting Process Explanation ── */}
-          <Card className="border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 shadow-sm rounded-2xl overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-400 to-orange-500" />
+          <Card className="border-zinc-200 bg-zinc-50 shadow-sm rounded-2xl overflow-hidden">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-black text-amber-900 flex items-center gap-2">
-                <HelpCircle size={16} className="text-amber-600" />
-                Kya Aap Reporting Ka Process Explain Kar Sakte Hai?
+              <CardTitle className="text-sm font-bold text-zinc-900 flex items-center gap-2">
+                <HelpCircle size={16} className="text-indigo-650" />
+                How does the Reporting Process work?
               </CardTitle>
-              <CardDescription className="text-xs text-amber-700 font-semibold">Mujhe 2 tarah ki reports chahiye — yahan poori detail hai</CardDescription>
+              <CardDescription className="text-xs text-zinc-500 font-medium">We support two types of reports — see full details below</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Type 1 */}
-                <div className="bg-white/80 border border-amber-200 rounded-xl p-4 space-y-2">
+                <div className="bg-white border border-zinc-200 rounded-xl p-4 space-y-2">
                   <div className="flex items-center gap-2">
-                    <div className="h-7 w-7 rounded-lg bg-amber-100 flex items-center justify-center text-amber-700 font-black text-sm">1</div>
-                    <span className="text-xs font-black text-amber-900">Product Mein Rolls Ka Detail</span>
+                    <div className="h-7 w-7 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-700 font-bold text-sm">1</div>
+                    <span className="text-xs font-bold text-zinc-800">Roll Details Per Product</span>
                   </div>
                   <p className="text-xs text-zinc-600 font-medium leading-relaxed">
-                    Ek product mein <strong>kitne rolls hain</strong> aur <strong>un rolls mein kitna balance (sqm) bacha hai</strong> — yeh har roll ke liye alag alag dikhe.
+                    Shows <strong>how many rolls</strong> exist in a product, and the <strong>remaining balance (sqm)</strong> of each roll individually.
                   </p>
-                  <div className="bg-amber-50 rounded-lg p-2.5 text-[10px] font-mono text-amber-800 space-y-1">
-                    <div>📦 PTFE — 3 Rolls</div>
-                    <div className="ml-4">• Roll #1 → 12.5 sqm</div>
-                    <div className="ml-4">• Roll #2 → 8.2 sqm</div>
-                    <div className="ml-4">• Roll #3 → 4.1 sqm</div>
+                  <div className="bg-indigo-50/50 border border-indigo-100/50 rounded-xl p-3 text-xs text-indigo-900 space-y-1.5 font-medium">
+                    <div className="flex items-center gap-1.5 text-indigo-950 font-semibold border-b border-indigo-200/50 pb-1">
+                      <span>📦 PTFE</span>
+                      <span className="text-[10px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded font-bold">3 ROLLS</span>
+                    </div>
+                    <ul className="pl-1 space-y-1 text-indigo-900">
+                      <li className="flex items-center gap-1.5">• Roll #1 <span className="font-medium text-indigo-950">→ 12.5 sqm</span></li>
+                      <li className="flex items-center gap-1.5">• Roll #2 <span className="font-medium text-indigo-950">→ 8.2 sqm</span></li>
+                      <li className="flex items-center gap-1.5">• Roll #3 <span className="font-medium text-indigo-950">→ 4.1 sqm</span></li>
+                    </ul>
                   </div>
                 </div>
                 {/* Type 2 */}
-                <div className="bg-white/80 border border-amber-200 rounded-xl p-4 space-y-2">
+                <div className="bg-white border border-zinc-200 rounded-xl p-4 space-y-2">
                   <div className="flex items-center gap-2">
-                    <div className="h-7 w-7 rounded-lg bg-orange-100 flex items-center justify-center text-orange-700 font-black text-sm">2</div>
-                    <span className="text-xs font-black text-amber-900">Product Ka Total Balance</span>
+                    <div className="h-7 w-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-700 font-bold text-sm">2</div>
+                    <span className="text-xs font-bold text-zinc-800">Total Product Balance</span>
                   </div>
                   <p className="text-xs text-zinc-600 font-medium leading-relaxed">
-                    Us pure product mein <strong>kitna total balance</strong> hai — yaani sare rolls ka balance jodkar ek <strong>grand total</strong>.
+                    Shows the <strong>grand total balance</strong> of a product by adding the balance of all its active rolls.
                   </p>
-                  <div className="bg-orange-50 rounded-lg p-2.5 text-[10px] font-mono text-orange-800 space-y-1">
-                    <div>📊 PTFE Total = 24.8 sqm</div>
-                    <div>📊 PVC Total = 18.3 sqm</div>
-                    <div>📊 PU Total = 9.6 sqm</div>
-                    <div className="border-t border-orange-200 pt-1 font-black">Grand Total = 52.7 sqm</div>
+                  <div className="bg-emerald-50/50 border border-emerald-100/30 rounded-xl p-3 text-xs text-emerald-900 space-y-1.5 font-medium">
+                    <div className="flex justify-between border-b border-emerald-100/50 pb-1">
+                      <span className="flex items-center gap-1.5">📊 PTFE Total</span>
+                      <span className="font-medium text-emerald-950">24.8 sqm</span>
+                    </div>
+                    <div className="flex justify-between border-b border-emerald-100/50 pb-1">
+                      <span className="flex items-center gap-1.5">📊 PVC Total</span>
+                      <span className="font-medium text-emerald-950">18.3 sqm</span>
+                    </div>
+                    <div className="flex justify-between border-b border-emerald-100/50 pb-1">
+                      <span className="flex items-center gap-1.5">📊 PU Total</span>
+                      <span className="font-medium text-emerald-950">9.6 sqm</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-emerald-950 pt-1 border-t border-emerald-200/50">
+                      <span className="flex items-center gap-1.5">Grand Total</span>
+                      <span className="font-semibold text-emerald-950">52.7 sqm</span>
+                    </div>
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-xs text-amber-700 font-bold bg-amber-100 rounded-xl px-4 py-2.5">
-                <Package size={14} />
-                <span>Iske liye <strong>"Roll Balance" Report</strong> (Report #4) click karein — wahan yeh sab detail dikhega!</span>
+              <div className="flex items-center gap-2 text-xs text-zinc-700 font-medium bg-zinc-100/80 rounded-xl px-4 py-2.5">
+                <Package size={14} className="text-zinc-500" />
+                <span>Click the <strong>"Roll Balance" Report</strong> (Report #4) to see all these details!</span>
               </div>
             </CardContent>
           </Card>
@@ -1050,141 +1164,395 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       ) : activeReportCard === 'inventory' ? (
         /* ── Inventory / Roll Balance Report ── */
         <div className="space-y-6 animate-in fade-in slide-in-from-top-3 duration-300">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="p-3 rounded-xl bg-amber-600 text-white shadow-sm">
                 <Package size={20} />
               </div>
               <div>
                 <h2 className="text-sm font-black uppercase tracking-wider text-zinc-900">Roll Balance Report</h2>
-                <p className="text-xs text-zinc-500 font-bold mt-0.5">Product-wise active rolls aur balance</p>
+                <p className="text-xs text-zinc-500 font-bold mt-0.5">Product-wise active rolls and balances</p>
               </div>
             </div>
-            <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5">
-              <Layers size={13} className="text-amber-600" />
-              <span className="text-xs font-bold text-amber-700">{rolls.filter(r => !r.isArchived && r.status !== 'refused').length} Active Rolls</span>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {/* View Toggle */}
+              <div className="flex bg-zinc-100 rounded-xl p-1 border border-zinc-200 shadow-inner">
+                <button
+                  type="button"
+                  onClick={() => setInventoryViewMode('table')}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer",
+                    inventoryViewMode === 'table'
+                      ? "bg-white text-zinc-950 shadow-sm"
+                      : "text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50/50"
+                  )}
+                >
+                  Table View
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInventoryViewMode('grid')}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer",
+                    inventoryViewMode === 'grid'
+                      ? "bg-white text-zinc-950 shadow-sm"
+                      : "text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50/50"
+                  )}
+                >
+                  Grid View
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5">
+                <Layers size={13} className="text-amber-600" />
+                <span className="text-xs font-bold text-amber-700">{rolls.filter(r => !r.isArchived && r.status !== 'refused').length} Active Rolls</span>
+              </div>
             </div>
           </div>
 
-          {/* Grand Total Summary Row */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {inventoryEntries.map(([product, data]) => (
-              <Card key={product} className="border-zinc-200 shadow-sm bg-white rounded-2xl overflow-hidden">
-                <div className="h-1 bg-gradient-to-r from-amber-400 to-orange-500" />
-                <CardContent className="p-4">
-                  <p className="text-[10px] font-black uppercase text-zinc-400 tracking-wider">{product}</p>
-                  <h3 className="text-xl font-black text-zinc-950 mt-0.5 font-mono">{data.totalRemaining.toFixed(1)} <span className="text-xs font-bold text-zinc-400">sqm</span></h3>
-                  <p className="text-[10px] text-zinc-500 font-bold mt-0.5">{data.rolls.length} rolls active</p>
-                </CardContent>
-              </Card>
-            ))}
-            <Card className="border-amber-200 shadow-sm bg-amber-50 rounded-2xl overflow-hidden">
-              <div className="h-1 bg-gradient-to-r from-amber-500 to-red-500" />
-              <CardContent className="p-4">
-                <p className="text-[10px] font-black uppercase text-amber-600 tracking-wider">Grand Total</p>
-                <h3 className="text-xl font-black text-zinc-950 mt-0.5 font-mono">
-                  {inventoryValues.reduce((s, d) => s + d.totalRemaining, 0).toFixed(1)} <span className="text-xs font-bold text-zinc-400">sqm</span>
-                </h3>
-                <p className="text-[10px] text-amber-700 font-bold mt-0.5">{rolls.filter(r => !r.isArchived && r.status !== 'refused').length} rolls total</p>
+          {/* KPI Summary Banner for Roll Usage in Selected Date Range */}
+          {(() => {
+            const grandTotalSqmCut = inventoryValues.reduce((s, d) => s + (d.totalSqmCutInRange || 0), 0);
+            const grandTotalCuts = inventoryValues.reduce((s, d) => s + (d.totalCutsInRange || 0), 0);
+            const formattedStart = startDate ? convertToDate(startDate).toLocaleDateString('en-IN') : 'Start';
+            const formattedEnd = endDate ? convertToDate(endDate).toLocaleDateString('en-IN') : 'Today';
+            return (
+              <div className="p-4 bg-gradient-to-r from-amber-500/10 via-amber-50/80 to-orange-50/60 border border-amber-200/80 rounded-2xl shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 my-3 animate-in fade-in slide-in-from-top-1">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-md bg-amber-600 text-white text-[10px] font-black uppercase tracking-wider">
+                      Roll Usage Period Summary
+                    </span>
+                    <span className="text-xs font-bold text-zinc-700 font-mono">
+                      📅 {selectedPreset === 'all' ? 'All Time' : `${formattedStart} to ${formattedEnd}`}
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-600 font-medium">
+                    Total roll material cut and cuts executed during the selected date range.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="px-4 py-2 bg-white/95 border border-amber-300 rounded-xl shadow-xs text-center">
+                    <span className="block text-[9px] font-black text-amber-700 uppercase tracking-widest">Total SqM Material Cut</span>
+                    <span className="text-lg font-black text-amber-800 font-mono">{grandTotalSqmCut.toFixed(2)} SqM</span>
+                  </div>
+                  <div className="px-4 py-2 bg-white/95 border border-orange-200 rounded-xl shadow-xs text-center">
+                    <span className="block text-[9px] font-black text-orange-600 uppercase tracking-widest">Cuts Executed</span>
+                    <span className="text-lg font-black text-orange-700 font-mono">{grandTotalCuts} Cuts</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {inventoryEntries.length === 0 ? (
+            <Card className="border-zinc-200 shadow-sm">
+              <CardContent className="py-12 flex flex-col items-center text-zinc-400">
+                <Package size={40} className="opacity-30 mb-3" />
+                <p className="text-sm font-medium">No active rolls found</p>
+                <p className="text-xs mt-1">Add rolls in BeltcutPro to view them here</p>
               </CardContent>
             </Card>
-          </div>
+          ) : inventoryViewMode === 'grid' ? (
+            <>
+              {/* Grand Total Summary Row */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                {inventoryEntries.map(([product, data]) => (
+                  <Card key={product} className="border-zinc-200 shadow-sm bg-white rounded-2xl overflow-hidden">
+                    <div className="h-1 bg-gradient-to-r from-amber-400 to-orange-500" />
+                    <CardContent className="p-4">
+                      <p className="text-[10px] font-black uppercase text-zinc-400 tracking-wider">{product}</p>
+                      <h3 className="text-xl font-black text-zinc-950 mt-0.5 font-mono">{data.totalRemaining.toFixed(1)} <span className="text-xs font-bold text-zinc-400">sqm</span></h3>
+                      <p className="text-[10px] text-zinc-500 font-bold mt-0.5">{data.rolls.length} rolls active</p>
+                    </CardContent>
+                  </Card>
+                ))}
+                <Card className="border-amber-200 shadow-sm bg-amber-50 rounded-2xl overflow-hidden">
+                  <div className="h-1 bg-gradient-to-r from-amber-500 to-red-500" />
+                  <CardContent className="p-4">
+                    <p className="text-[10px] font-black uppercase text-amber-600 tracking-wider">Grand Total</p>
+                    <h3 className="text-xl font-black text-zinc-950 mt-0.5 font-mono">
+                      {inventoryValues.reduce((s, d) => s + d.totalRemaining, 0).toFixed(1)} <span className="text-xs font-bold text-zinc-400">sqm</span>
+                    </h3>
+                    <p className="text-[10px] text-amber-700 font-bold mt-0.5">{rolls.filter(r => !r.isArchived && r.status !== 'refused').length} rolls total</p>
+                  </CardContent>
+                </Card>
+              </div>
 
-          {/* Product-wise Roll Detail */}
-          <div className="space-y-4">
-            {inventoryEntries.length === 0 ? (
-              <Card className="border-zinc-200 shadow-sm">
-                <CardContent className="py-12 flex flex-col items-center text-zinc-400">
-                  <Package size={40} className="opacity-30 mb-3" />
-                  <p className="text-sm font-medium">Koi active rolls nahi mile</p>
-                  <p className="text-xs mt-1">BeltcutPro mein rolls add karein</p>
-                </CardContent>
-              </Card>
-            ) : inventoryEntries.map(([product, data]) => (
-              <Card key={product} className="border-zinc-200 shadow-sm rounded-2xl overflow-hidden">
-                <button type="button" className="w-full text-left"
-                  onClick={() => setExpandedProducts(prev => {
-                    const next = new Set(prev);
-                    next.has(product) ? next.delete(product) : next.add(product);
-                    return next;
-                  })}>
-                  <CardHeader className="pb-3 border-b border-zinc-100 hover:bg-zinc-50/50 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="h-9 w-9 rounded-xl bg-amber-100 flex items-center justify-center">
-                          <Package size={16} className="text-amber-600" />
+              {/* Product-wise Roll Detail */}
+              <div className="space-y-4">
+                {inventoryEntries.map(([product, data]) => (
+                  <Card key={product} className="border-zinc-200 shadow-sm rounded-2xl overflow-hidden">
+                    <button type="button" className="w-full text-left cursor-pointer"
+                      onClick={() => setExpandedProducts(prev => {
+                        const next = new Set(prev);
+                        next.has(product) ? next.delete(product) : next.add(product);
+                        return next;
+                      })}>
+                      <CardHeader className="pb-3 border-b border-zinc-100 hover:bg-zinc-50/50 transition-colors">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="h-9 w-9 rounded-xl bg-amber-100 flex items-center justify-center">
+                              <Package size={16} className="text-amber-600" />
+                            </div>
+                            <div>
+                              <CardTitle className="text-sm font-black text-zinc-900">{product}</CardTitle>
+                              <CardDescription className="text-xs">{data.rolls.length} rolls • {data.totalRemaining.toFixed(2)} sqm remaining</CardDescription>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <p className="text-xs text-zinc-400 font-bold">Total Balance</p>
+                              <p className="text-base font-black text-amber-600 font-mono">{data.totalRemaining.toFixed(2)} sqm</p>
+                            </div>
+                            {expandedProducts.has(product) ? <ChevronUp size={16} className="text-zinc-400" /> : <ChevronDown size={16} className="text-zinc-400" />}
+                          </div>
                         </div>
-                        <div>
-                          <CardTitle className="text-sm font-black text-zinc-900">{product}</CardTitle>
-                          <CardDescription className="text-xs">{data.rolls.length} rolls • {data.totalRemaining.toFixed(2)} sqm remaining</CardDescription>
+                        {/* Progress bar */}
+                        <div className="mt-2 w-full bg-zinc-100 rounded-full h-1.5">
+                          <div className="bg-gradient-to-r from-amber-400 to-orange-500 h-full rounded-full transition-all"
+                            style={{ width: `${Math.min(100, (data.totalRemaining / Math.max(data.totalSqm, 1)) * 105)}%` }} />
                         </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="text-right">
-                          <p className="text-xs text-zinc-400 font-bold">Total Balance</p>
-                          <p className="text-base font-black text-amber-600 font-mono">{data.totalRemaining.toFixed(2)} sqm</p>
-                        </div>
-                        {expandedProducts.has(product) ? <ChevronUp size={16} className="text-zinc-400" /> : <ChevronDown size={16} className="text-zinc-400" />}
-                      </div>
-                    </div>
-                    {/* Progress bar */}
-                    <div className="mt-2 w-full bg-zinc-100 rounded-full h-1.5">
-                      <div className="bg-gradient-to-r from-amber-400 to-orange-500 h-full rounded-full transition-all"
-                        style={{ width: `${Math.min(100, (data.totalRemaining / Math.max(data.totalSqm, 1)) * 100)}%` }} />
-                    </div>
-                    <p className="text-[10px] text-zinc-400 font-bold mt-0.5">{((data.totalRemaining / Math.max(data.totalSqm, 1)) * 100).toFixed(1)}% baki hai</p>
-                  </CardHeader>
-                </button>
+                        <p className="text-[10px] text-zinc-400 font-bold mt-0.5">{((data.totalRemaining / Math.max(data.totalSqm, 1)) * 100).toFixed(1)}% remaining</p>
+                      </CardHeader>
+                    </button>
 
-                {expandedProducts.has(product) && (
-                  <CardContent className="p-0">
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader className="bg-zinc-50">
-                          <TableRow>
-                            <TableHead className="text-[10px] font-black uppercase text-zinc-500">Roll ID</TableHead>
-                            <TableHead className="text-[10px] font-black uppercase text-zinc-500">Width × Length</TableHead>
-                            <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Total Sqm</TableHead>
-                            <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Remaining Sqm</TableHead>
-                            <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Used %</TableHead>
-                            <TableHead className="text-[10px] font-black uppercase text-zinc-500">Status</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody className="text-xs">
-                          {data.rolls.map((roll: any, idx: number) => {
-                            const usedPct = roll.totalSqm > 0 ? ((roll.totalSqm - roll.remainingSqm) / roll.totalSqm) * 100 : 0;
-                            return (
-                              <TableRow key={roll.id} className="hover:bg-amber-50/30 transition-colors h-10">
-                                <TableCell className="font-mono font-bold text-zinc-700">#{idx + 1} <span className="text-zinc-400 font-normal">{roll.id.substring(0, 6)}</span></TableCell>
-                                <TableCell className="font-mono text-zinc-600">{(roll.fullWidth * 1000).toFixed(0)}mm × {(roll.fullLength * 1000).toFixed(0)}mm</TableCell>
-                                <TableCell className="text-right font-mono font-bold text-zinc-900">{(roll.totalSqm || 0).toFixed(2)}</TableCell>
-                                <TableCell className="text-right font-mono font-black text-amber-600">{(roll.remainingSqm || 0).toFixed(2)}</TableCell>
-                                <TableCell className="text-right">
-                                  <span className={cn('text-[10px] font-black px-1.5 py-0.5 rounded',
-                                    usedPct > 80 ? 'bg-red-50 text-red-600' : usedPct > 50 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'
-                                  )}>{usedPct.toFixed(0)}%</span>
-                                </TableCell>
-                                <TableCell>
-                                  <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full',
-                                    roll.isReuse ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-700'
-                                  )}>{roll.isReuse ? 'Reuse' : 'Active'}</span>
+                    {expandedProducts.has(product) && (
+                      <CardContent className="p-0">
+                        <div className="overflow-x-auto">
+                          <Table>
+                            <TableHeader className="bg-zinc-50">
+                              <TableRow>
+                                <TableHead className="text-[10px] font-black uppercase text-zinc-500">Roll ID</TableHead>
+                                <TableHead className="text-[10px] font-black uppercase text-zinc-500">Width × Length</TableHead>
+                                <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Total Sqm</TableHead>
+                                <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Remaining Sqm</TableHead>
+                                <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Used %</TableHead>
+                                <TableHead className="text-[10px] font-black uppercase text-zinc-500">Status</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody className="text-xs">
+                              {data.rolls.map((roll: any, idx: number) => {
+                                const usedPct = roll.totalSqm > 0 ? ((roll.totalSqm - roll.remainingSqm) / roll.totalSqm) * 100 : 0;
+                                return (
+                                  <TableRow key={roll.id} className="hover:bg-amber-50/30 transition-colors h-10">
+                                    <TableCell className="font-mono font-bold text-zinc-700">#{idx + 1} <span className="text-zinc-400 font-normal">{roll.id.substring(0, 6)}</span></TableCell>
+                                    <TableCell className="font-mono text-zinc-600">{(roll.fullWidth * 1000).toFixed(0)}mm × {(roll.fullLength * 1000).toFixed(0)}mm</TableCell>
+                                    <TableCell className="text-right font-mono font-bold text-zinc-900">{(roll.totalSqm || 0).toFixed(2)}</TableCell>
+                                    <TableCell className="text-right font-mono font-black text-amber-600">{(roll.remainingSqm || 0).toFixed(2)}</TableCell>
+                                    <TableCell className="text-right">
+                                      <span className={cn('text-[10px] font-black px-1.5 py-0.5 rounded',
+                                        usedPct > 80 ? 'bg-red-50 text-red-600' : usedPct > 50 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'
+                                      )}>{usedPct.toFixed(0)}%</span>
+                                    </TableCell>
+                                    <TableCell>
+                                      <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full',
+                                        roll.isReuse ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-700'
+                                      )}>{roll.isReuse ? 'Reuse' : 'Active'}</span>
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                              <TableRow className="bg-amber-50 border-t-2 border-amber-200 font-black">
+                                <TableCell colSpan={3} className="text-xs font-black text-amber-800">{product} — Total Balance</TableCell>
+                                <TableCell className="text-right text-sm font-black font-mono text-amber-700">{data.totalRemaining.toFixed(2)} sqm</TableCell>
+                                <TableCell colSpan={2} />
+                              </TableRow>
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </CardContent>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            </>
+          ) : (
+            /* Table View */
+            <Card className="border-zinc-200 shadow-sm bg-white rounded-2xl overflow-hidden">
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader className="bg-zinc-50">
+                      <TableRow className="h-10">
+                        <TableHead className="w-[50px] text-center text-[10px] font-black uppercase text-zinc-500 pl-4">S.No</TableHead>
+                        <TableHead className="text-[10px] font-black uppercase text-zinc-500">Product Name</TableHead>
+                        <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-center">Active Rolls</TableHead>
+                        <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Total Remaining (sqm)</TableHead>
+                        <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Total Original (sqm)</TableHead>
+                        <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-center">Status / Remaining %</TableHead>
+                        <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-center w-[100px] pr-4">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody className="text-xs font-semibold text-zinc-700">
+                      {inventoryEntries.map(([product, data], index) => {
+                        const isExpanded = expandedProducts.has(product);
+                        const remainingPct = data.totalSqm > 0 ? (data.totalRemaining / data.totalSqm) * 100 : 0;
+                        const usedPct = 100 - remainingPct;
+                        return (
+                          <React.Fragment key={product}>
+                            <TableRow 
+                              className={cn(
+                                "hover:bg-zinc-50/50 transition-colors cursor-pointer h-12",
+                                isExpanded && "bg-zinc-50/30"
+                              )}
+                              onClick={() => setExpandedProducts(prev => {
+                                const next = new Set(prev);
+                                next.has(product) ? next.delete(product) : next.add(product);
+                                return next;
+                              })}
+                            >
+                              <TableCell className="text-center font-bold text-zinc-400 pl-4">{index + 1}</TableCell>
+                              <TableCell className="font-bold text-zinc-900">{product}</TableCell>
+                              <TableCell className="text-center">
+                                <Badge variant="outline" className="bg-zinc-50 font-mono font-bold text-zinc-700 border-zinc-200">
+                                  {data.rolls.length}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right font-mono font-bold text-amber-600">
+                                {data.totalRemaining.toFixed(2)}
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-zinc-500">
+                                {data.totalSqm.toFixed(2)}
+                              </TableCell>
+                              <TableCell className="align-middle">
+                                <div className="flex flex-col gap-1 max-w-[120px] mx-auto">
+                                  <div className="w-full bg-zinc-100 rounded-full h-1.5 overflow-hidden">
+                                    <div 
+                                      className="bg-gradient-to-r from-amber-400 to-orange-500 h-full rounded-full transition-all"
+                                      style={{ width: `${Math.min(100, remainingPct)}%` }} 
+                                    />
+                                  </div>
+                                  <span className="text-[9px] text-zinc-400 font-bold text-center">
+                                    {remainingPct.toFixed(1)}% remaining (used {usedPct.toFixed(0)}%)
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-center pr-4">
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm"
+                                  className="h-8 w-8 p-0 text-zinc-500 hover:text-zinc-900 cursor-pointer"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedProducts(prev => {
+                                      const next = new Set(prev);
+                                      next.has(product) ? next.delete(product) : next.add(product);
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                            {isExpanded && (
+                              <TableRow className="bg-zinc-50/10 hover:bg-transparent">
+                                <TableCell colSpan={7} className="p-0 border-t-0">
+                                  <div className="p-4 bg-zinc-50/30 border-y border-zinc-100">
+                                    <p className="text-[10px] font-black uppercase tracking-wider text-zinc-400 mb-2 px-2">
+                                      Rollwise Breakup for {product}
+                                    </p>
+                                    <div className="border border-zinc-200 rounded-xl overflow-hidden bg-white shadow-sm">
+                                      <Table>
+                                        <TableHeader className="bg-zinc-50/80">
+                                          <TableRow className="h-9">
+                                            <TableHead className="text-[10px] font-black uppercase text-zinc-500 pl-4">Roll ID</TableHead>
+                                            <TableHead className="text-[10px] font-black uppercase text-zinc-500">Width × Length</TableHead>
+                                            <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Total Sqm</TableHead>
+                                            <TableHead className="text-[10px] font-black uppercase text-amber-600 text-right">Cut In Date Range</TableHead>
+                                            <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Remaining Sqm</TableHead>
+                                            <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Used %</TableHead>
+                                            <TableHead className="text-[10px] font-black uppercase text-zinc-500 pr-4">Status</TableHead>
+                                          </TableRow>
+                                        </TableHeader>
+                                        <TableBody className="text-xs">
+                                          {data.rolls.map((roll: any, idx: number) => {
+                                            const rollUsedPct = roll.totalSqm > 0 ? ((roll.totalSqm - roll.remainingSqm) / roll.totalSqm) * 100 : 0;
+                                            return (
+                                              <TableRow key={roll.id} className="hover:bg-amber-50/30 transition-colors h-10">
+                                                <TableCell className="font-mono font-bold text-zinc-700 pl-4">
+                                                  #{idx + 1} <span className="text-zinc-400 font-normal">{roll.id.substring(0, 6)}</span>
+                                                </TableCell>
+                                                <TableCell className="font-mono text-zinc-650">
+                                                  {(roll.fullWidth * 1000).toFixed(0)}mm × {(roll.fullLength * 1000).toFixed(0)}mm
+                                                </TableCell>
+                                                <TableCell className="text-right font-mono font-bold text-zinc-900">
+                                                  {(roll.totalSqm || 0).toFixed(2)}
+                                                </TableCell>
+                                                <TableCell className="text-right font-mono font-black text-amber-600">
+                                                  {(roll.sqmCutInRange || 0).toFixed(2)} sqm
+                                                </TableCell>
+                                                <TableCell className="text-right font-mono font-bold text-zinc-700">
+                                                  {(roll.remainingSqm || 0).toFixed(2)}
+                                                </TableCell>
+                                                <TableCell className="text-right">
+                                                  <span className={cn('text-[10px] font-black px-1.5 py-0.5 rounded',
+                                                    rollUsedPct > 80 ? 'bg-red-50 text-red-600' : rollUsedPct > 50 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'
+                                                  )}>
+                                                    {rollUsedPct.toFixed(0)}%
+                                                  </span>
+                                                </TableCell>
+                                                <TableCell className="pr-4">
+                                                  <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full',
+                                                    roll.isReuse ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-700'
+                                                  )}>
+                                                    {roll.isReuse ? 'Reuse' : 'Active'}
+                                                  </span>
+                                                </TableCell>
+                                              </TableRow>
+                                            );
+                                          })}
+                                        </TableBody>
+                                      </Table>
+                                    </div>
+                                  </div>
                                 </TableCell>
                               </TableRow>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                      
+                      {/* Grand Total Row */}
+                      <TableRow className="bg-amber-50/50 hover:bg-amber-50/50 font-black h-12 border-t-2 border-amber-200">
+                        <TableCell className="text-center font-bold text-zinc-400 pl-4">-</TableCell>
+                        <TableCell className="font-black text-amber-900 text-xs">GRAND TOTAL</TableCell>
+                        <TableCell className="text-center">
+                          <Badge className="bg-amber-100 text-amber-800 font-mono font-black border-amber-200">
+                            {rolls.filter(r => !r.isArchived && r.status !== 'refused').length}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-black text-amber-700 text-sm">
+                          {inventoryValues.reduce((s, d) => s + d.totalRemaining, 0).toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-zinc-600">
+                          {inventoryValues.reduce((s, d) => s + d.totalSqm, 0).toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {(() => {
+                            const totalSqm = inventoryValues.reduce((s, d) => s + d.totalSqm, 0);
+                            const totalRemaining = inventoryValues.reduce((s, d) => s + d.totalRemaining, 0);
+                            const grandRemainingPct = totalSqm > 0 ? (totalRemaining / totalSqm) * 100 : 0;
+                            return (
+                              <div className="flex flex-col gap-1 max-w-[120px] mx-auto">
+                                <span className="text-[10px] text-amber-800 font-black">
+                                  {grandRemainingPct.toFixed(1)}% remaining
+                                </span>
+                              </div>
                             );
-                          })}
-                          <TableRow className="bg-amber-50 border-t-2 border-amber-200 font-black">
-                            <TableCell colSpan={3} className="text-xs font-black text-amber-800">{product} — Total Balance</TableCell>
-                            <TableCell className="text-right text-sm font-black font-mono text-amber-700">{data.totalRemaining.toFixed(2)} sqm</TableCell>
-                            <TableCell colSpan={2} />
-                          </TableRow>
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </CardContent>
-                )}
-              </Card>
-            ))}
-          </div>
+                          })()}
+                        </TableCell>
+                        <TableCell className="pr-4" />
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       ) : (
         /* Sub-Report Views (purchase / profitability / company) */
@@ -1196,7 +1564,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
               <div className="flex items-center gap-3 w-full md:w-auto">
                 <div className={cn(
                   "p-3 rounded-xl text-white shrink-0 shadow-sm",
-                  activeReportCard === 'purchase' && "bg-zinc-950",
+                  activeReportCard === 'purchase' && "bg-[#1e3a8a]",
                   activeReportCard === 'profitability' && "bg-emerald-700",
                   activeReportCard === 'company' && "bg-indigo-700"
                 )}>
@@ -1211,7 +1579,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
                     {activeReportCard === 'company' && 'Company Sales Report'}
                   </h2>
                   <p className="text-xs text-zinc-500 font-bold mt-0.5">
-                    Range: {new Date(startDate).toLocaleDateString('en-IN')} to {new Date(endDate).toLocaleDateString('en-IN')}
+                    Range: {selectedPreset === 'all' ? 'All Time' : `${new Date(startDate).toLocaleDateString('en-IN')} to ${new Date(endDate).toLocaleDateString('en-IN')}`}
                   </p>
                 </div>
               </div>
