@@ -42,11 +42,39 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filter options based on search query
-  const filteredOptions = options.filter(option =>
-    option.label.toLowerCase().includes(search.toLowerCase()) ||
-    option.value.toLowerCase().includes(search.toLowerCase())
-  );
+  // Filter options based on search query (smart multi-token & normalized matching)
+  const filteredOptions = options.filter(option => {
+    if (!search.trim()) return true;
+
+    const labelLower = option.label.toLowerCase();
+    const valueLower = option.value.toLowerCase();
+    const searchLower = search.toLowerCase().trim();
+
+    // 1. Direct substring match
+    if (labelLower.includes(searchLower) || valueLower.includes(searchLower)) {
+      return true;
+    }
+
+    // 2. Normalized alphanumeric match (ignores spaces, hyphens, parentheses, etc.)
+    const cleanLabel = labelLower.replace(/[^a-z0-9]/g, '');
+    const cleanValue = valueLower.replace(/[^a-z0-9]/g, '');
+    const cleanSearch = searchLower.replace(/[^a-z0-9]/g, '');
+
+    if (cleanSearch && (cleanLabel.includes(cleanSearch) || cleanValue.includes(cleanSearch))) {
+      return true;
+    }
+
+    // 3. Multi-token match (all typed words must match somewhere in label/value or clean version)
+    const tokens = searchLower.split(/\s+/).filter(Boolean);
+    return tokens.every(token => {
+      const cleanToken = token.replace(/[^a-z0-9]/g, '');
+      return (
+        labelLower.includes(token) ||
+        valueLower.includes(token) ||
+        (cleanToken && (cleanLabel.includes(cleanToken) || cleanValue.includes(cleanToken)))
+      );
+    });
+  });
 
   const selectedOption = options.find(o => o.value === value);
 
@@ -82,6 +110,13 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && filteredOptions.length > 0) {
+                  e.preventDefault();
+                  onChange(filteredOptions[0].value);
+                  setIsOpen(false);
+                }
+              }}
               placeholder="Search..."
               className="w-full bg-transparent text-xs font-bold text-slate-800 focus:outline-none"
               autoFocus

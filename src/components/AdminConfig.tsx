@@ -5,7 +5,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Button } from './ui/button';
 import { toast } from 'sonner';
-import { UserPlus, Trash2, Upload, Download, Search, Edit2, Save, X, IndianRupee, Percent, ListPlus, Settings2, Lock, Unlock, Plus, Link2, Building2, ChevronDown, ChevronLeft, Info, Clock, Loader2 } from 'lucide-react';
+import { UserPlus, Trash2, Upload, Download, Search, Edit2, Save, X, IndianRupee, Percent, ListPlus, Settings2, Lock, Unlock, Plus, Link2, Building2, ChevronDown, ChevronLeft, Info, Clock, Loader2, GitMerge } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { useAuth } from '../contexts/AuthContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from './ui/dialog';
@@ -24,6 +24,8 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
   const [editingCompany, setEditingCompany] = useState<{ id: string; name: string } | null>(null);
   const [isLoadingCompanies, setIsLoadingCompanies] = useState(false);
   const [materialStocks, setMaterialStocks] = useState<MaterialStock[]>([]);
+
+  const [selectedBOMIndices, setSelectedBOMIndices] = useState<number[]>([]);
 
   const fetchCompanies = async () => {
     setIsLoadingCompanies(true);
@@ -54,21 +56,20 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
 
   const verifyDeletionCode = async (itemName: string): Promise<boolean> => {
     if (user?.role !== 'admin') return true; // Non-admins skip
-    // Always check with server - don't rely on stale localStorage hasDeletionCode
     try {
-      // First, check if this admin has a deletion code configured
       const checkRes = await fetch('/api/auth/me');
       if (checkRes.ok) {
         const checkData = await checkRes.json();
         if (!checkData.user?.hasDeletionCode) {
-          return true; // No code set, allow deletion
+          alert('No Deletion Security Code configured for your account. Please set it in User Management first.');
+          return false;
         }
       }
     } catch {
-      // If check fails, still proceed to prompt for safety
+      // If check fails, proceed to prompt for safety
     }
     const entered = prompt(`Enter Deletion Security Code to delete "${itemName}":`);
-    if (entered === null) return false; // User cancelled
+    if (entered === null || entered.trim() === '') return false;
     try {
       const res = await fetch('/api/auth/verify-deletion-code', {
         method: 'POST',
@@ -159,7 +160,8 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
       beltTypes: [],
       jointTypes: [],
       tapeTypes: [],
-      units: [{ id: 'mm', label: 'Millimeters (mm)', value: 'mm' }, { id: 'mtr', label: 'Meters (mtr)', value: 'mtr' }]
+      units: [{ id: 'mm', label: 'Millimeters (mm)', value: 'mm' }, { id: 'mtr', label: 'Meters (mtr)', value: 'mtr' }],
+      variables: []
     };
     
     const merged = { ...defaultConfig, ...config };
@@ -169,6 +171,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
     merged.jointTypes = config?.jointTypes || [];
     merged.tapeTypes = config?.tapeTypes || [];
     merged.units = config?.units || defaultConfig.units;
+    merged.variables = config?.variables || [];
     return merged;
   });
   const [isSaving, setIsSaving] = useState(false);
@@ -179,6 +182,100 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
 
   const [editingBOM, setEditingBOM] = useState<{ tIdx: number, sIdx: number } | null>(null);
   const [newBOMItem, setNewBOMItem] = useState<any>({ name: '', rate: '', unit: '', formula: 'L * W' });
+
+  // Custom variables management state
+  const [newVarName, setNewVarName] = useState('');
+  const [newVarSymbol, setNewVarSymbol] = useState('');
+  const [newVarMappedField, setNewVarMappedField] = useState<'length' | 'width' | 'holeSize' | 'holeDistHorizontal' | 'holeDistVertical' | 'pricePerHole' | 'rate' | 'totalHoles' | 'holesH' | 'holesV' | 'manualPackingCost' | 'manualProfitMargin' | 'purchaseGst' | 'fixCost' | 'defaultProfit' | 'saleGst'>('length');
+  const [showVariablesModal, setShowVariablesModal] = useState(false);
+  const [varTarget, setVarTarget] = useState<'active' | 'new'>('active');
+  const [activeOptionName, setActiveOptionName] = useState<string | null>(null);
+
+  const getActiveBOMVariables = (): any[] => {
+    if (varTarget === 'new') {
+      return newBOMItem.variables || [];
+    }
+    if (selectedCatIdx !== null && selectedStyleIdx !== null && selectedBOMIdx !== null) {
+      return localConfig.beltTypes[selectedCatIdx]?.styles?.[selectedStyleIdx]?.bom?.[selectedBOMIdx]?.variables || [];
+    }
+    return [];
+  };
+
+  const updateActiveBOMVariables = (updatedVars: any[]) => {
+    if (varTarget === 'new') {
+      setNewBOMItem({ ...newBOMItem, variables: updatedVars });
+    } else if (selectedCatIdx !== null && selectedStyleIdx !== null && selectedBOMIdx !== null) {
+      const updated = JSON.parse(JSON.stringify(localConfig.beltTypes));
+      if (updated[selectedCatIdx]?.styles?.[selectedStyleIdx]?.bom?.[selectedBOMIdx]) {
+        updated[selectedCatIdx].styles[selectedStyleIdx].bom[selectedBOMIdx].variables = updatedVars;
+        const nextConfig = { ...localConfig, beltTypes: updated };
+        setLocalConfig(nextConfig);
+        saveConfig(updated, nextConfig);
+      }
+    }
+  };
+
+  const isValidFormulaInput = (val: string, itemVariables?: any[], optionName?: string) => {
+    const upperVal = val.toUpperCase();
+    if (!/^[0-9A-Z\.\+\-\*\/\(\)\s]*$/.test(upperVal)) {
+      return false;
+    }
+    // Filter variables: only allow variables that have no option restriction, or match the current option name
+    const targetOption = optionName || undefined;
+    const filteredVars = (itemVariables || []).filter((v: any) => v.forOptionName === targetOption);
+    const allowedVars = ['L', 'W', 'P', 'R', ...filteredVars.map((v: any) => v.symbol.toUpperCase())];
+    const letterTokens = upperVal.match(/[A-Z]+/g) || [];
+    for (const token of letterTokens) {
+      const isPrefixOfAny = allowedVars.some(v => v.startsWith(token));
+      if (!isPrefixOfAny) return false;
+    }
+    return true;
+  };
+
+  const handleAddVariable = () => {
+    if (!newVarName.trim()) {
+      toast.error('Variable Name is required');
+      return;
+    }
+    const symbolClean = newVarSymbol.trim().toUpperCase();
+    if (!symbolClean) {
+      toast.error('Variable symbol (sign) is required');
+      return;
+    }
+    if (!/^[A-Z][A-Z0-9]*$/.test(symbolClean)) {
+      toast.error('Symbol must start with a capital letter and contain only letters and numbers (e.g. HHD, L2)');
+      return;
+    }
+    const isReserved = ['L', 'W', 'P', 'R'].includes(symbolClean);
+    const currentVars = getActiveBOMVariables();
+    const isDuplicate = currentVars.some((v: any) => v.symbol === symbolClean && v.forOptionName === (activeOptionName || undefined));
+    if (isReserved) {
+      toast.error(`Symbol "${symbolClean}" is a default reserved variable symbol.`);
+      return;
+    }
+    if (isDuplicate) {
+      toast.error(`Symbol "${symbolClean}" is already in use.`);
+      return;
+    }
+    const newVar = {
+      id: Date.now().toString(),
+      name: newVarName.trim(),
+      symbol: symbolClean,
+      mappedField: newVarMappedField,
+      forOptionName: varTarget === 'active' ? (activeOptionName || undefined) : undefined
+    };
+    const updatedVars = [...currentVars, newVar];
+    updateActiveBOMVariables(updatedVars);
+    setNewVarName('');
+    setNewVarSymbol('');
+    setNewVarMappedField('length');
+  };
+
+  const handleDeleteVariable = (id: string, symbol: string) => {
+    const currentVars = getActiveBOMVariables();
+    const updatedVars = currentVars.filter((v: any) => v.id !== id);
+    updateActiveBOMVariables(updatedVars);
+  };
 
   const [selectedCatIdx, setSelectedCatIdx] = useState<number | null>(0);
   const [selectedStyleIdx, setSelectedStyleIdx] = useState<number | null>(null);
@@ -229,12 +326,177 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
     { label: '18%', value: '18' },
   ];
 
-  const saveConfig = async (updatedBeltTypes?: Config['beltTypes']) => {
+  const handleMergeThreadAndPin = (catIdx: number, styleIdx: number) => {
+    const updated = [...localConfig.beltTypes];
+    const style = updated[catIdx]?.styles?.[styleIdx];
+    if (!style || !Array.isArray(style.bom)) return;
+
+    const threadIdx = style.bom.findIndex((b: any) => b.name && (b.name.toLowerCase().includes('thread') || b.name.toLowerCase().includes('thraed')));
+    const pinIdx = style.bom.findIndex((b: any) => b.name && b.name.toLowerCase().includes('pin'));
+
+    if (threadIdx === -1 && pinIdx === -1) {
+      toast.error('Neither Thread nor PIN found in this style BOM.');
+      return;
+    }
+
+    const threadItem = threadIdx !== -1 ? style.bom[threadIdx] : null;
+    const pinItem = pinIdx !== -1 ? style.bom[pinIdx] : null;
+
+    const pinFormula = pinItem?.formula || 'W*1.05*2';
+    const threadFormula = threadItem?.formula || 'W*10*4*2';
+
+    const mergedItem = {
+      id: Date.now().toString(),
+      name: 'Thread & PIN',
+      rate: pinItem?.rate || threadItem?.rate || 115,
+      unit: pinItem?.unit || 'mtr',
+      formula: `(${pinFormula}) + (${threadFormula})`,
+      variables: [...(pinItem?.variables || []), ...(threadItem?.variables || [])]
+    };
+
+    const indicesToRemove = [threadIdx, pinIdx].filter(i => i !== -1).sort((a, b) => b - a);
+    indicesToRemove.forEach(i => style.bom.splice(i, 1));
+    style.bom.push(mergedItem);
+
+    setLocalConfig({ ...localConfig, beltTypes: updated });
+    setSelectedBOMIdx(null);
+    setSelectedBOMIndices([]);
+    saveConfig(updated);
+    toast.success('Thread and PIN merged into "Thread & PIN" successfully!');
+  };
+
+  const handleSplitThreadAndPin = (catIdx: number, styleIdx: number) => {
+    const updated = [...localConfig.beltTypes];
+    const style = updated[catIdx]?.styles?.[styleIdx];
+    if (!style || !Array.isArray(style.bom)) return;
+
+    const mergedIdx = style.bom.findIndex((b: any) => b.name && (b.name.toLowerCase().includes('thread & pin') || b.name.toLowerCase().includes('thread & pin joint')));
+    if (mergedIdx === -1) {
+      toast.error('Merged "Thread & PIN" component not found in this style.');
+      return;
+    }
+
+    style.bom.splice(mergedIdx, 1);
+    style.bom.push(
+      { id: Date.now().toString(), name: 'Thread', rate: 1, formula: 'W*10*4*2', unit: 'mtr' },
+      { id: (Date.now() + 1).toString(), name: 'PIN', rate: 115, formula: 'W*1.05*2', unit: 'mtr' }
+    );
+
+    setLocalConfig({ ...localConfig, beltTypes: updated });
+    setSelectedBOMIdx(null);
+    setSelectedBOMIndices([]);
+    saveConfig(updated);
+    toast.success('Split "Thread & PIN" back into individual Thread and PIN items!');
+  };
+
+  const handleMergeSelectedBOMItems = (catIdx: number, styleIdx: number) => {
+    if (selectedBOMIndices.length < 2) {
+      toast.error('Select at least 2 BOM items to merge.');
+      return;
+    }
+
+    const updated = [...localConfig.beltTypes];
+    const style = updated[catIdx]?.styles?.[styleIdx];
+    if (!style || !Array.isArray(style.bom)) return;
+
+    const selectedItems = selectedBOMIndices.map(i => style.bom[i]).filter(Boolean);
+    const defaultMergedName = selectedItems.map(i => i.name).join(' & ');
+    const mergedName = prompt('Enter name for the merged component:', defaultMergedName);
+    if (!mergedName || !mergedName.trim()) return;
+
+    const combinedFormula = selectedItems.map(i => `(${i.formula || '0'})`).join(' + ');
+    const firstRate = selectedItems[0]?.rate || 0;
+    const firstUnit = selectedItems[0]?.unit || 'sqm';
+
+    const mergedItem = {
+      id: Date.now().toString(),
+      name: mergedName.trim(),
+      rate: firstRate,
+      unit: firstUnit,
+      formula: combinedFormula,
+      variables: selectedItems.flatMap(i => i.variables || [])
+    };
+
+    const sortedIndices = [...selectedBOMIndices].sort((a, b) => b - a);
+    sortedIndices.forEach(i => style.bom.splice(i, 1));
+    style.bom.push(mergedItem);
+
+    setLocalConfig({ ...localConfig, beltTypes: updated });
+    setSelectedBOMIdx(null);
+    setSelectedBOMIndices([]);
+    saveConfig(updated);
+    toast.success(`Merged ${selectedItems.length} components into "${mergedName.trim()}"!`);
+  };
+
+  const handleMergeSideEdgesAndFEP = (catIdx: number, styleIdx: number) => {
+    const updated = [...localConfig.beltTypes];
+    const style = updated[catIdx]?.styles?.[styleIdx];
+    if (!style || !Array.isArray(style.bom)) return;
+
+    const redBorderIdx = style.bom.findIndex((b: any) => b.name && (b.name.toLowerCase().includes('red bodar') || b.name.toLowerCase().includes('red border') || b.name.toLowerCase().includes('side edges')));
+    const fepIdx = style.bom.findIndex((b: any) => b.name && b.name.toLowerCase().includes('fep'));
+
+    if (redBorderIdx === -1 && fepIdx === -1) {
+      toast.error('Neither RED Border nor FEP Film found in this style BOM.');
+      return;
+    }
+
+    const borderItem = redBorderIdx !== -1 ? style.bom[redBorderIdx] : null;
+    const fepItem = fepIdx !== -1 ? style.bom[fepIdx] : null;
+
+    const combinedRate = (parseFloat(String(borderItem?.rate || 0)) || 0) + (parseFloat(String(fepItem?.rate || 0)) || 0);
+
+    const mergedItem = {
+      id: Date.now().toString(),
+      name: 'Side Edges (RED Border + FEP)',
+      rate: combinedRate || 28,
+      unit: borderItem?.unit || fepItem?.unit || 'mtr',
+      formula: borderItem?.formula || fepItem?.formula || 'L*4',
+      variables: [...(borderItem?.variables || []), ...(fepItem?.variables || [])]
+    };
+
+    const indicesToRemove = [redBorderIdx, fepIdx].filter(i => i !== -1).sort((a, b) => b - a);
+    indicesToRemove.forEach(i => style.bom.splice(i, 1));
+    style.bom.push(mergedItem);
+
+    setLocalConfig({ ...localConfig, beltTypes: updated });
+    setSelectedBOMIdx(null);
+    setSelectedBOMIndices([]);
+    saveConfig(updated);
+    toast.success('Merged RED Border and FEP Film into "Side Edges (RED Border + FEP)"!');
+  };
+
+  const handleSplitSideEdgesAndFEP = (catIdx: number, styleIdx: number) => {
+    const updated = [...localConfig.beltTypes];
+    const style = updated[catIdx]?.styles?.[styleIdx];
+    if (!style || !Array.isArray(style.bom)) return;
+
+    const mergedIdx = style.bom.findIndex((b: any) => b.name && (b.name.toLowerCase().includes('side edges') || b.name.toLowerCase().includes('border + fep')));
+    if (mergedIdx === -1) {
+      toast.error('Merged "Side Edges" component not found in this style.');
+      return;
+    }
+
+    style.bom.splice(mergedIdx, 1);
+    style.bom.push(
+      { id: Date.now().toString(), name: 'RED Bodar', rate: 19, formula: 'L*4', unit: 'mtr' },
+      { id: (Date.now() + 1).toString(), name: 'FEP Film', rate: 9, formula: 'L*4', unit: 'mtr' }
+    );
+
+    setLocalConfig({ ...localConfig, beltTypes: updated });
+    setSelectedBOMIdx(null);
+    setSelectedBOMIndices([]);
+    saveConfig(updated);
+    toast.success('Split "Side Edges" back into RED Bodar and FEP Film!');
+  };
+
+  const saveConfig = async (updatedBeltTypes?: Config['beltTypes'], configOverride?: Config) => {
     setIsSaving(true);
     try {
+      const baseConfig = configOverride || localConfig;
       const configToSave = {
-        ...localConfig,
-        beltTypes: (updatedBeltTypes || localConfig.beltTypes || []).filter((t: any) => t.name?.trim()),
+        ...baseConfig,
+        beltTypes: (updatedBeltTypes || baseConfig.beltTypes || []).filter((t: any) => t.name?.trim()),
       };
       
       const res = await fetch('/api/settings/config', {
@@ -314,7 +576,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
     const name = newItem.styleName.trim();
     if (!name) return;
     const updated = [...localConfig.beltTypes];
-    updated[typeIdx].styles = [...(updated[typeIdx].styles || []), { id: Date.now().toString(), name }];
+    updated[typeIdx].styles = [...(updated[typeIdx].styles || []), { id: Date.now().toString(), name, bom: [] }];
     setLocalConfig({ ...localConfig, beltTypes: updated });
     setNewItem({ ...newItem, styleName: '' });
   };
@@ -331,6 +593,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
     const updated = [...localConfig.beltTypes];
     const style = updated[tIdx].styles[sIdx];
     style.bom = [...(style.bom || []), { 
+      id: Date.now().toString(),
       ...newBOMItem, 
       rate: parseFloat(newBOMItem.rate) || 0
     }];
@@ -411,7 +674,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
     
     if (isArea) {
       // Look for existing area units
-      const areaUnits = allUnits.filter(u => {
+      const areaUnits = allUnits.filter((u: any) => {
         const label = (u.label || '').toLowerCase();
         const value = (u.value || '').toLowerCase();
         return label.includes('sq') || value.startsWith('sq') || label.includes('square') || label.includes('area');
@@ -420,10 +683,10 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
       if (areaUnits.length > 0) return areaUnits;
       
       // If no area units defined, virtualize them from length units
-      return allUnits.filter(u => {
+      return allUnits.filter((u: any) => {
         const label = (u.label || '').toLowerCase();
         return !label.includes('nos') && !label.includes('pcs') && !label.includes('unit');
-      }).map(u => ({
+      }).map((u: any) => ({
         ...u,
         id: `sq-${u.id}`,
         label: `Sq. ${u.label}`,
@@ -433,7 +696,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
     
     if (isLength) {
       // Strictly show only linear units
-      return allUnits.filter(u => {
+      return allUnits.filter((u: any) => {
         const label = (u.label || '').toLowerCase();
         const value = (u.value || '').toLowerCase();
         const isAreaUnit = label.includes('sq') || value.startsWith('sq') || label.includes('square') || label.includes('area');
@@ -462,7 +725,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
     
     // If mismatch, force a new unit
     if (isArea !== currentUnitIsArea) {
-      const preferred = filtered.find(u => {
+      const preferred = filtered.find((u: any) => {
         const v = u.value.toLowerCase();
         const l = u.label.toLowerCase();
         if (isArea) return v === 'sqm' || l.includes('sq m') || l.includes('square meter');
@@ -481,27 +744,29 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
       if (item) {
         const syncedUnit = getAutoUnit(item.formula, item.unit);
         if (syncedUnit !== item.unit) {
-          const updated = [...localConfig.beltTypes];
-          if (updated[selectedCatIdx]?.styles?.[selectedStyleIdx]?.bom?.[selectedBOMIdx]) {
-            updated[selectedCatIdx].styles[selectedStyleIdx].bom[selectedBOMIdx].unit = syncedUnit;
-            setLocalConfig({ ...localConfig, beltTypes: updated });
-          }
+          setLocalConfig((prev: any) => {
+            const updated = JSON.parse(JSON.stringify(prev.beltTypes));
+            if (updated[selectedCatIdx]?.styles?.[selectedStyleIdx]?.bom?.[selectedBOMIdx]) {
+              updated[selectedCatIdx].styles[selectedStyleIdx].bom[selectedBOMIdx].unit = syncedUnit;
+            }
+            return { ...prev, beltTypes: updated };
+          });
         }
       }
     }
-  }, [selectedBOMIdx, selectedStyleIdx, selectedCatIdx]);
+  }, [selectedBOMIdx, selectedStyleIdx, selectedCatIdx, localConfig]);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="p-1.5 bg-zinc-900 rounded-lg text-white">
+          <div className="p-1.5 bg-blue-50 text-[#1e40af] rounded-lg">
             <Settings2 className="h-4 w-4" />
           </div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900">System Configuration</h1>
         </div>
         <Button 
-          className="bg-zinc-900 hover:bg-zinc-800 text-white gap-1.5 h-8 text-xs px-3 shadow-md" 
+          className="bg-[#1e40af] hover:bg-[#1d4ed8] text-white gap-1.5 h-8 text-xs px-3 shadow-sm rounded-[6px]" 
           onClick={handleSave}
           disabled={isSaving}
         >
@@ -590,7 +855,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                     onKeyDown={(e) => e.key === 'Enter' && handleAddCompany()}
                   />
                 </div>
-                <Button onClick={handleAddCompany} size="sm" className="bg-zinc-900 hover:bg-zinc-800 text-white h-9">
+                <Button onClick={handleAddCompany} size="sm" className="bg-[#1e40af] hover:bg-[#1d4ed8] text-white h-9 rounded-[6px]">
                   Add
                 </Button>
               </div>
@@ -653,7 +918,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
         <Card className="border-zinc-200 shadow-md overflow-hidden bg-white animate-in fade-in duration-200">
           <CardHeader className="flex flex-row items-center justify-between bg-zinc-50/50 border-b py-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-zinc-900 rounded-lg shadow-lg">
+              <div className="p-2 bg-blue-50 text-[#1e40af] rounded-lg border border-blue-100">
                 <Settings2 className="h-5 w-5 text-white" />
               </div>
               <div>
@@ -926,26 +1191,100 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                   </div>
                 ) : (
                   <>
-                    <div className="p-3 bg-zinc-50/80 border-b flex items-center justify-between">
-                       <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">3. BILL OF MATERIAL</span>
-                       <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="h-6 w-6 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 hover:scale-110 transition-transform disabled:opacity-30" 
-                        disabled={selectedStyleIdx === null}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const name = prompt('New Component Name:');
-                          if (name && selectedCatIdx !== null && selectedStyleIdx !== null) {
-                            const updated = [...localConfig.beltTypes];
-                            const style = updated[selectedCatIdx].styles[selectedStyleIdx];
-                            style.bom = [...(style.bom || []), { id: Date.now().toString(), name: name.trim(), rate: 0, formula: 'L * W', unit: 'sqm' }];
-                            setLocalConfig({ ...localConfig, beltTypes: updated });
-                          }
-                        }}
-                      >
-                        <ListPlus className="h-3 w-3" />
-                      </Button>
+                    <div className="p-3 bg-zinc-50/80 border-b flex flex-col gap-2">
+                       <div className="flex items-center justify-between">
+                         <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">3. BILL OF MATERIAL</span>
+                         <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-6 w-6 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 hover:scale-110 transition-transform disabled:opacity-30" 
+                          disabled={selectedStyleIdx === null}
+                          title="Add New Component"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const name = prompt('New Component Name:');
+                            if (name && selectedCatIdx !== null && selectedStyleIdx !== null) {
+                              const updated = [...localConfig.beltTypes];
+                              const style = updated[selectedCatIdx].styles[selectedStyleIdx];
+                              style.bom = [...(style.bom || []), { id: Date.now().toString(), name: name.trim(), rate: 0, formula: 'L * W', unit: 'sqm' }];
+                              setLocalConfig({ ...localConfig, beltTypes: updated });
+                            }
+                          }}
+                        >
+                          <ListPlus className="h-3 w-3" />
+                        </Button>
+                       </div>
+
+                       {selectedStyleIdx !== null && selectedCatIdx !== null && (() => {
+                         const currentBom = localConfig.beltTypes[selectedCatIdx]?.styles?.[selectedStyleIdx]?.bom || [];
+                         const hasThreadOrPin = currentBom.some((b: any) => b.name && (b.name.toLowerCase().includes('thread') || b.name.toLowerCase().includes('thraed') || b.name.toLowerCase().includes('pin')));
+                         const hasMergedThreadPin = currentBom.some((b: any) => b.name && b.name.toLowerCase().includes('thread & pin'));
+
+                         const hasSideEdgesOrFEP = currentBom.some((b: any) => b.name && (b.name.toLowerCase().includes('red bodar') || b.name.toLowerCase().includes('red border') || b.name.toLowerCase().includes('fep')));
+                         const hasMergedSideEdges = currentBom.some((b: any) => b.name && (b.name.toLowerCase().includes('side edges') || b.name.toLowerCase().includes('border + fep')));
+
+                         return (
+                           <div className="flex items-center gap-1.5 flex-wrap">
+                             {hasMergedSideEdges ? (
+                               <Button
+                                 variant="outline"
+                                 size="sm"
+                                 className="h-6 text-[10px] px-2 py-0 border-amber-200 bg-amber-50/50 text-amber-700 hover:bg-amber-100 font-bold"
+                                 onClick={() => handleSplitSideEdgesAndFEP(selectedCatIdx, selectedStyleIdx)}
+                                 title="Split Side Edges back into RED Border and FEP Film"
+                               >
+                                 ↩️ Split Side Edges & FEP
+                               </Button>
+                             ) : hasSideEdgesOrFEP ? (
+                               <Button
+                                 variant="outline"
+                                 size="sm"
+                                 className="h-6 text-[10px] px-2 py-0 border-purple-200 bg-purple-50/50 text-purple-700 hover:bg-purple-100 font-bold"
+                                 onClick={() => handleMergeSideEdgesAndFEP(selectedCatIdx, selectedStyleIdx)}
+                                 title="Merge RED Border and FEP Film into Side Edges"
+                               >
+                                 <GitMerge className="h-3 w-3 mr-1" />
+                                 Merge Side Edges & FEP
+                               </Button>
+                             ) : null}
+
+                             {hasMergedThreadPin ? (
+                               <Button
+                                 variant="outline"
+                                 size="sm"
+                                 className="h-6 text-[10px] px-2 py-0 border-amber-200 bg-amber-50/50 text-amber-700 hover:bg-amber-100 font-bold"
+                                 onClick={() => handleSplitThreadAndPin(selectedCatIdx, selectedStyleIdx)}
+                                 title="Split Thread & PIN back into separate items"
+                               >
+                                 ↩️ Split Thread & PIN
+                               </Button>
+                             ) : hasThreadOrPin ? (
+                               <Button
+                                 variant="outline"
+                                 size="sm"
+                                 className="h-6 text-[10px] px-2 py-0 border-blue-200 bg-blue-50/50 text-blue-700 hover:bg-blue-100 font-bold"
+                                 onClick={() => handleMergeThreadAndPin(selectedCatIdx, selectedStyleIdx)}
+                                 title="Merge Thread and PIN into one component"
+                               >
+                                 <GitMerge className="h-3 w-3 mr-1" />
+                                 Merge Thread & PIN
+                               </Button>
+                             ) : null}
+
+                             {selectedBOMIndices.length >= 2 && (
+                               <Button
+                                 variant="outline"
+                                 size="sm"
+                                 className="h-6 text-[10px] px-2 py-0 border-emerald-200 bg-emerald-50/50 text-emerald-700 hover:bg-emerald-100 font-bold"
+                                 onClick={() => handleMergeSelectedBOMItems(selectedCatIdx, selectedStyleIdx)}
+                               >
+                                 <GitMerge className="h-3 w-3 mr-1" />
+                                 Merge Selected ({selectedBOMIndices.length})
+                               </Button>
+                             )}
+                           </div>
+                         );
+                       })()}
                     </div>
                     <div className="flex-1 overflow-y-auto p-2 space-y-1">
                       {selectedStyleIdx !== null && localConfig.beltTypes[selectedCatIdx!]?.styles?.[selectedStyleIdx] ? (
@@ -960,13 +1299,28 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                 : "border-transparent hover:bg-zinc-50 hover:border-zinc-100"
                             )}
                           >
+                            <input 
+                              type="checkbox" 
+                              checked={selectedBOMIndices.includes(idx)} 
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                if (e.target.checked) {
+                                  setSelectedBOMIndices([...selectedBOMIndices, idx]);
+                                } else {
+                                  setSelectedBOMIndices(selectedBOMIndices.filter(i => i !== idx));
+                                }
+                              }}
+                              className="h-3.5 w-3.5 rounded border-zinc-300 text-blue-600 focus:ring-blue-500 mr-2 cursor-pointer shrink-0"
+                              title="Select to merge"
+                            />
                             <div className="flex flex-col min-w-0 flex-1 mr-1">
                               <span className={cn("text-xs font-bold truncate", selectedBOMIdx === idx ? "text-blue-700" : "text-zinc-700")}>
                                 {item.name.toUpperCase()}
                               </span>
                                <span className="text-[10px] text-blue-500 font-mono font-bold tracking-tighter">={item.formula}</span>
                             </div>
-                            <div className="flex items-center gap-1 shrink-0">
+                            <div className="flex items-center gap-1.5 shrink-0">
                               <Edit2 
                                 className="h-3 w-3 text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-blue-600 cursor-pointer" 
                                 onClick={(e) => {
@@ -1050,11 +1404,12 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                       <div className="space-y-1.5">
                                         <Label className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-1">
                                           <span>Unit Rate (₹)</span>
-                                          <Info 
-                                            className="h-3.5 w-3.5 text-zinc-400 hover:text-blue-600 hover:scale-110 transition-all cursor-pointer"
-                                            onClick={() => openRateHistory(item.id, item.name)}
-                                            title="Click to view price change history"
-                                          />
+                                          <span title="Click to view price change history">
+                                            <Info 
+                                              className="h-3.5 w-3.5 text-zinc-400 hover:text-blue-600 hover:scale-110 transition-all cursor-pointer"
+                                              onClick={() => openRateHistory(item.id, item.name)}
+                                            />
+                                          </span>
                                         </Label>
                                         <div className="flex gap-2">
                                           <div className="relative flex-1">
@@ -1141,29 +1496,50 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                           {item.isLocked ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
                                         </Button>
                                     </div>
-                                    <div className="relative">
-                                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-xs">=</div>
-                                      <Input 
-                                        className={cn(
-                                          "pl-7 h-10 font-mono text-xs font-bold transition-all",
-                                          item.isLocked 
-                                            ? "bg-zinc-100 border-zinc-300 text-zinc-800 cursor-not-allowed" 
-                                            : "bg-white border-zinc-300 focus:border-blue-400"
-                                        )}
-                                        disabled={item.isLocked}
-                                        value={item.formula} 
-                                        onChange={(e) => {
-                                          const val = e.target.value.toUpperCase();
-                                          if (val && !/^[0-9LWP\.\+\-\*\/\(\)\s]*$/.test(val)) return;
-                                          const updated = [...localConfig.beltTypes];
-                                          updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].formula = val;
-                                          setLocalConfig({ ...localConfig, beltTypes: updated });
-                                        }}
-                                      />
+                                    <div className="flex gap-2">
+                                      <div className="relative flex-1">
+                                        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-xs">=</div>
+                                        <Input 
+                                          className={cn(
+                                            "pl-7 h-10 font-mono text-xs font-bold transition-all w-full",
+                                            item.isLocked 
+                                              ? "bg-zinc-100 border-zinc-300 text-zinc-800 cursor-not-allowed" 
+                                              : "bg-white border-zinc-350 focus:border-blue-400 rounded-[6px]"
+                                          )}
+                                          disabled={item.isLocked}
+                                          value={item.formula} 
+                                          onChange={(e) => {
+                                            const val = e.target.value.toUpperCase();
+                                            if (val && !isValidFormulaInput(val, item.variables)) return;
+                                            const updated = [...localConfig.beltTypes];
+                                            updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].formula = val;
+                                            setLocalConfig({ ...localConfig, beltTypes: updated });
+                                          }}
+                                        />
+                                      </div>
+                                      <Button 
+                                        variant="outline" 
+                                        size="sm" 
+                                        type="button"
+                                        className="h-10 w-10 p-0 border-blue-200 text-blue-700 hover:bg-blue-50/50 cursor-pointer shadow-xs rounded-[6px] shrink-0"
+                                        onClick={() => {
+                                           setVarTarget('active');
+                                           setSelectedBOMIdx(selectedBOMIdx);
+                                           setActiveOptionName(null);
+                                           setShowVariablesModal(true);
+                                         }}
+                                        title="Manage Variables"
+                                      >
+                                        <Settings2 className="h-4.5 w-4.5" />
+                                      </Button>
                                     </div>
-                                    <p className="text-[9px] text-zinc-400 italic">Allowed: L, W, P (Perimeter), Numbers, +, -, *, /, ( )</p>
+                                    <p className="text-[9px] text-zinc-400 italic">
+                                      Allowed: L, W, P, R{(item.variables || []).length > 0 ? `, ${(item.variables || []).map((v: any) => v.symbol).join(', ')}` : ''}, Numbers, Operators (+, -, *, /)
+                                    </p>
                                   </div>
                                 </div>
+
+                                {/* SUB-CATEGORIES AREA */}
 
                                 {/* SCROLLING SUB-CATEGORIES AREA */}
                                 <div className="flex-1 flex flex-col min-h-0 space-y-3 pt-6 border-t border-zinc-100">
@@ -1181,7 +1557,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                       onClick={() => {
                                         const updated = [...localConfig.beltTypes];
                                         const bomItem = updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx];
-                                        bomItem.options = [...(bomItem.options || []), { name: '', rate: 0, unit: bomItem.unit }];
+                                        bomItem.options = [...(bomItem.options || []), { id: Date.now().toString() + '-' + Math.random().toString(36).substr(2, 4), name: '', rate: 0, unit: bomItem.unit }];
                                         setLocalConfig({ ...localConfig, beltTypes: updated });
                                       }}
                                     >
@@ -1208,49 +1584,68 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                          </div>
 
                                          <div className="space-y-1">
-                                           <div className="flex items-center justify-between">
-                                             <Label className="text-[9px] font-black uppercase tracking-tighter text-zinc-400 ml-1">Mathematical Formula (Optional)</Label>
-                                             <span className="text-[8px] text-zinc-400 italic">Defaults to: ={item.formula}</span>
-                                           </div>
-                                           <div className="relative">
-                                             <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-[10px]">=</div>
-                                             <Input 
-                                               placeholder={item.formula}
-                                               className="h-8 pl-6 text-xs font-mono border-zinc-200 bg-zinc-50/50 focus:bg-white focus:border-blue-400 transition-all w-full"
-                                               value={opt.formula || ''}
-                                               onChange={(e) => {
-                                                 const val = e.target.value.toUpperCase();
-                                                 if (val && !/^[0-9LWP\.\+\-\*\/\(\)\s]*$/.test(val)) return;
-                                                 const updated = [...localConfig.beltTypes];
-                                                 updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options[optIdx].formula = val;
-                                                 setLocalConfig({ ...localConfig, beltTypes: updated });
-                                               }}
-                                             />
-                                           </div>
-                                         </div>
+                                            <div className="flex items-center justify-between">
+                                              <Label className="text-[9px] font-black uppercase tracking-tighter text-zinc-400 ml-1">Mathematical Formula (Optional)</Label>
+                                              <span className="text-[8px] text-zinc-400 italic">Defaults to: ={item.formula}</span>
+                                            </div>
+                                            <div className="flex gap-1.5">
+                                              <div className="relative flex-1">
+                                                <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-[10px]">=</div>
+                                                <Input 
+                                                  placeholder={item.formula}
+                                                  className="h-8 pl-6 text-xs font-mono border-zinc-200 bg-zinc-50/50 focus:bg-white focus:border-blue-400 transition-all w-full rounded-[6px]"
+                                                  value={opt.formula || ''}
+                                                  onChange={(e) => {
+                                                    const val = e.target.value.toUpperCase();
+                                                    if (val && !isValidFormulaInput(val, item.variables, opt.name)) return;
+                                                    const updated = [...localConfig.beltTypes];
+                                                    updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options[optIdx].formula = val;
+                                                    setLocalConfig({ ...localConfig, beltTypes: updated });
+                                                  }}
+                                                />
+                                              </div>
+                                              <Button 
+                                                variant="outline" 
+                                                size="sm" 
+                                                type="button"
+                                                className="h-8 w-8 p-0 border-blue-200 text-blue-700 hover:bg-blue-50/50 cursor-pointer shadow-xs rounded-[6px] shrink-0 flex items-center justify-center"
+                                                onClick={() => {
+                                                  setVarTarget('active');
+                                                  setActiveOptionName(opt.name);
+                                                  setShowVariablesModal(true);
+                                                }}
+                                                title="Manage Variables"
+                                              >
+                                                <Settings2 className="h-3.5 w-3.5" />
+                                              </Button>
+                                            </div>
+                                          </div>
 
                                          <div className="flex items-end gap-2">
                                            <div className="flex-1 space-y-1">
                                              <Label className="text-[9px] font-black uppercase tracking-tighter text-zinc-400 ml-1 flex items-center gap-1.5">
                                                <span>Rate {opt.isFormation ? <span className="text-violet-400 font-normal normal-case">(auto from formation)</span> : ''}</span>
                                                {opt.name && !opt.isFormation && (
-                                                 <Info 
-                                                   className="h-3.5 w-3.5 text-zinc-400 hover:text-blue-600 hover:scale-110 transition-all cursor-pointer" 
-                                                   onClick={() => openRateHistory(`${item.id}::${opt.name}`, opt.name)}
-                                                   title="Click to view price change history"
-                                                 />
+                                                 <span title="Click to view price change history">
+                                                   <Info 
+                                                     className="h-3.5 w-3.5 text-zinc-400 hover:text-blue-600 hover:scale-110 transition-all cursor-pointer" 
+                                                     onClick={() => openRateHistory(`${item.id}::${opt.name}`, opt.name)}
+                                                   />
+                                                 </span>
                                                )}
                                              </Label>
                                              <div className="relative">
                                                <div className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-bold">₹</div>
                                                <Input 
                                                  type="number"
+                                                 readOnly={opt.isFormation}
                                                  className={cn(
-                                                   "h-8 pl-5 pr-1 text-xs border-zinc-200 font-bold text-zinc-700 focus:bg-white focus:border-blue-400 transition-all",
-                                                   opt.isFormation ? "bg-violet-50/50 text-violet-800" : "bg-zinc-50/50"
+                                                   "h-8 pl-5 pr-1 text-xs border-zinc-200 font-bold transition-all",
+                                                   opt.isFormation ? "bg-violet-50/70 text-violet-900 font-black cursor-not-allowed border-violet-200 shadow-inner" : "bg-zinc-50/50 text-zinc-700"
                                                  )}
-                                                 value={opt.rate}
+                                                 value={opt.isFormation ? (opt.formationItems || []).reduce((sum: number, fi: any) => sum + (parseFloat(fi.rate) || 0), 0) : opt.rate}
                                                  onChange={(e) => {
+                                                   if (opt.isFormation) return;
                                                    const updated = [...localConfig.beltTypes];
                                                    updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options[optIdx].rate = parseFloat(e.target.value) || 0;
                                                    setLocalConfig({ ...localConfig, beltTypes: updated });
@@ -1312,18 +1707,19 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                              size="icon" 
                                              className="h-8 w-8 text-zinc-300 hover:text-rose-500 hover:bg-rose-50 transition-colors shrink-0"
                                               onClick={async () => {
-                                                if (window.confirm(`Are you sure you want to delete Sub-category "${opt.name}"?`)) {
-                                                  const verified = await verifyDeletionCode(opt.name);
-                                                  if (!verified) return;
-                                                  const updated = [...localConfig.beltTypes];
-                                                  updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options.splice(optIdx, 1);
-                                                  setLocalConfig({ ...localConfig, beltTypes: updated });
-                                                }
+                                                const verified = await verifyDeletionCode(opt.name || `this sub-category`);
+                                                if (!verified) return;
+                                                const updated = [...localConfig.beltTypes];
+                                                updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options.splice(optIdx, 1);
+                                                setLocalConfig({ ...localConfig, beltTypes: updated });
+                                                saveConfig(updated);
                                               }}
                                            >
                                              <Trash2 className="h-4 w-4" />
                                            </Button>
                                          </div>
+
+                                         {/* FORMATION TOGGLE & BUILDER */}
 
                                          {/* ── FORMATION TOGGLE & BUILDER ── */}
                                          <div className="border-t border-zinc-100 pt-2.5 mt-0.5">
@@ -1339,6 +1735,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                                  } else if (!option.formationItems || option.formationItems.length === 0) {
                                                    option.formationItems = [{ name: '', rate: 0, formula: item.formula || 'L * W', unit: opt.unit || item.unit || 'mtr' }];
                                                  }
+                                                 option.rate = (option.formationItems || []).reduce((sum: number, fi: any) => sum + (parseFloat(fi.rate) || 0), 0);
                                                  setLocalConfig({ ...localConfig, beltTypes: updated });
                                                }}
                                                className={cn(
@@ -1371,6 +1768,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                                      const updated = [...localConfig.beltTypes];
                                                      const option = updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options[optIdx];
                                                      option.formationItems = [...(option.formationItems || []), { name: '', rate: 0, formula: item.formula || 'L * W', unit: opt.unit || item.unit || 'mtr' }];
+                                                     option.rate = (option.formationItems || []).reduce((sum: number, fi: any) => sum + (parseFloat(fi.rate) || 0), 0);
                                                      setLocalConfig({ ...localConfig, beltTypes: updated });
                                                    }}
                                                    className="flex items-center gap-1 text-[9px] font-black text-violet-600 hover:text-violet-700 bg-violet-100 hover:bg-violet-200 px-2 py-1 rounded-md transition-colors"
@@ -1402,26 +1800,28 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                                          value={fi.rate}
                                                          onChange={(e) => {
                                                            const updated = [...localConfig.beltTypes];
-                                                           updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options[optIdx].formationItems[fiIdx].rate = parseFloat(e.target.value) || 0;
+                                                           const targetOpt = updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options[optIdx];
+                                                           targetOpt.formationItems[fiIdx].rate = parseFloat(e.target.value) || 0;
+                                                           targetOpt.rate = (targetOpt.formationItems || []).reduce((sum: number, item: any) => sum + (parseFloat(item.rate) || 0), 0);
                                                            setLocalConfig({ ...localConfig, beltTypes: updated });
                                                          }}
                                                        />
                                                      </div>
-                                                     <div className="relative w-[70px] shrink-0">
-                                                       <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400 font-mono">=</span>
-                                                       <Input
-                                                         placeholder={item.formula}
-                                                         className="h-7 pl-4 text-[10px] font-mono border-zinc-200 bg-zinc-50/50 uppercase"
-                                                         value={fi.formula}
-                                                         onChange={(e) => {
-                                                           const val = e.target.value.toUpperCase();
-                                                           if (val && !/^[0-9LWP\.\+\-\*\/\(\)\s]*$/.test(val)) return;
-                                                           const updated = [...localConfig.beltTypes];
-                                                           updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options[optIdx].formationItems[fiIdx].formula = val;
-                                                           setLocalConfig({ ...localConfig, beltTypes: updated });
-                                                         }}
-                                                       />
-                                                     </div>
+                                                      <div className="relative w-[70px] shrink-0">
+                                                        <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400 font-mono">=</span>
+                                                        <Input
+                                                          placeholder={item.formula}
+                                                          className="h-7 pl-4 text-[10px] font-mono border-zinc-200 bg-zinc-50/50 uppercase"
+                                                          value={fi.formula}
+                                                          onChange={(e) => {
+                                                            const val = e.target.value.toUpperCase();
+                                                            if (val && !isValidFormulaInput(val, item.variables)) return;
+                                                            const updated = [...localConfig.beltTypes];
+                                                            updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options[optIdx].formationItems[fiIdx].formula = val;
+                                                            setLocalConfig({ ...localConfig, beltTypes: updated });
+                                                          }}
+                                                        />
+                                                      </div>
                                                      <Select
                                                        value={fi.unit || opt.unit || item.unit || 'mtr'}
                                                        onValueChange={(val) => {
@@ -1443,7 +1843,9 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                                                        type="button"
                                                        onClick={() => {
                                                          const updated = [...localConfig.beltTypes];
-                                                         updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options[optIdx].formationItems.splice(fiIdx, 1);
+                                                         const targetOpt = updated[selectedCatIdx!].styles[selectedStyleIdx!].bom[selectedBOMIdx].options[optIdx];
+                                                         targetOpt.formationItems.splice(fiIdx, 1);
+                                                         targetOpt.rate = (targetOpt.formationItems || []).reduce((sum: number, item: any) => sum + (parseFloat(item.rate) || 0), 0);
                                                          setLocalConfig({ ...localConfig, beltTypes: updated });
                                                        }}
                                                        className="text-zinc-300 hover:text-rose-500 transition-colors shrink-0"
@@ -1564,24 +1966,39 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
               </div>
               <div className="col-span-2 md:col-span-4 space-y-2">
                 <Label className="text-xs font-bold text-blue-600">Enter Math Formula (=)</Label>
-                <div className="relative">
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-zinc-400">=</div>
-                  <Input 
-                    placeholder="(W + 0.26) * 2 or L * 4" 
-                    className="border-blue-400 bg-blue-50/30 pl-8 font-mono text-blue-800"
-                    value={newBOMItem.formula} 
-                    onChange={(e) => {
-                      const val = e.target.value.toUpperCase();
-                      if (val && !/^[0-9LW\.\+\-\*\/\(\)\s]*$/.test(val)) return;
-                      setNewBOMItem({ 
-                        ...newBOMItem, 
-                        formula: val,
-                        unit: getAutoUnit(val, newBOMItem.unit)
-                      });
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-zinc-400">=</div>
+                    <Input 
+                      placeholder="(W + 0.26) * 2 or L * 4" 
+                      className="border-blue-400 bg-blue-50/30 pl-8 font-mono text-blue-800 w-full rounded-[6px]"
+                      value={newBOMItem.formula} 
+                      onChange={(e) => {
+                        const val = e.target.value.toUpperCase();
+                        if (val && !isValidFormulaInput(val, newBOMItem.variables)) return;
+                        setNewBOMItem({ 
+                          ...newBOMItem, 
+                          formula: val,
+                          unit: getAutoUnit(val, newBOMItem.unit)
+                        });
+                      }}
+                    />
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    type="button"
+                    className="h-10 w-10 p-0 border-blue-200 text-blue-700 hover:bg-blue-50/50 cursor-pointer shadow-xs rounded-[6px] shrink-0 flex items-center justify-center"
+                    onClick={() => {
+                      setVarTarget('new');
+                      setShowVariablesModal(true);
                     }}
-                  />
+                    title="Manage Variables"
+                  >
+                    <Settings2 className="h-4.5 w-4.5" />
+                  </Button>
                 </div>
-                <p className="text-[10px] text-zinc-400 italic">Use 'L' for Length, 'W' for Width (in meters).</p>
+                <p className="text-[10px] text-zinc-400 italic">Use 'L' for Length, 'W' for Width, 'P' for Perimeter, 'R' for Rate, or custom variable symbols.</p>
               </div>
 
               <Button onClick={addBOMItem} className="col-span-2 md:col-span-4 mt-4 shadow-lg active:scale-95 transition-transform">
@@ -1670,7 +2087,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
             <Button variant="outline" className="w-full sm:w-auto text-xs" onClick={() => setCategoryModal({ ...categoryModal, isOpen: false })}>
               Cancel
             </Button>
-            <Button className="w-full sm:w-auto text-xs bg-zinc-900 text-white hover:bg-zinc-800" onClick={handleSaveCategoryModal}>
+            <Button className="w-full sm:w-auto text-xs bg-[#1e40af] text-white hover:bg-zinc-800" onClick={handleSaveCategoryModal}>
               {categoryModal.mode === 'add' ? 'Add Category' : 'Save Changes'}
             </Button>
           </DialogFooter>
@@ -1721,7 +2138,209 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
             )}
           </div>
           <DialogFooter>
-            <Button onClick={() => setRateHistoryItem(null)} className="w-full bg-zinc-900 text-white hover:bg-zinc-800" size="sm">
+            <Button onClick={() => setRateHistoryItem(null)} className="w-full bg-[#1e40af] text-white hover:bg-zinc-800" size="sm">
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Variables Management Modal */}
+      <Dialog open={showVariablesModal} onOpenChange={setShowVariablesModal}>
+        <DialogContent className="max-w-4xl sm:max-w-4xl border-blue-100 shadow-[0_8px_30px_rgb(30,58,138,0.1)] rounded-[16px] bg-white text-zinc-900 overflow-hidden p-0 gap-0">
+          <DialogHeader className="bg-blue-50/50 border-b border-blue-100/60 p-6 flex flex-row items-center gap-4">
+            <div className="p-2.5 bg-blue-100 text-[#1e40af] rounded-xl shrink-0">
+              <Settings2 className="h-5 w-5" />
+            </div>
+            <div className="flex-1">
+              <DialogTitle className="text-lg font-black text-[#1e3a8a] tracking-tight">Formula Variables Manager</DialogTitle>
+              <DialogDescription className="text-xs text-zinc-500 mt-0.5">Define and map custom variable signs for use inside mathematical formulas</DialogDescription>
+              {/* Context label — shows which BOM item these variables belong to */}
+              {(() => {
+                const itemName = varTarget === 'new'
+                  ? 'New BOM Item'
+                  : (selectedCatIdx !== null && selectedStyleIdx !== null && selectedBOMIdx !== null)
+                    ? localConfig.beltTypes[selectedCatIdx]?.styles?.[selectedStyleIdx]?.bom?.[selectedBOMIdx]?.name || 'Unknown Item'
+                    : null;
+                return itemName ? (
+                  <div className="mt-2 inline-flex flex-wrap items-center gap-1.5 bg-[#1e40af]/10 border border-[#1e40af]/20 text-[#1e40af] text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#1e40af] animate-pulse" />
+                    Working on: {itemName}
+                    {activeOptionName && (
+                      <span className="bg-amber-100 border border-amber-200 text-amber-800 px-2 py-0.5 rounded-full ml-1 font-black normal-case">
+                        Option: {activeOptionName}
+                      </span>
+                    )}
+                    <span className="font-normal text-blue-500 normal-case tracking-normal ml-0.5">— variables here apply only to this specific {activeOptionName ? 'option' : 'item'}</span>
+                  </div>
+                ) : null;
+              })()}
+            </div>
+          </DialogHeader>
+
+          <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+            {/* Form to add variable */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-blue-50/20 p-4 rounded-xl border border-blue-100/40">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-zinc-700">Variable Name</Label>
+                <Input 
+                  placeholder="e.g. Horizontal Spacing" 
+                  value={newVarName}
+                  onChange={(e) => setNewVarName(e.target.value)}
+                  className="h-9 border-blue-200 focus-visible:ring-blue-100 text-xs bg-white rounded-[6px]"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-zinc-700 font-mono">Sign / Symbol</Label>
+                <Input 
+                  placeholder="e.g. HHD" 
+                  value={newVarSymbol}
+                  onChange={(e) => setNewVarSymbol(e.target.value)}
+                  className="h-9 border-blue-200 focus-visible:ring-blue-100 text-xs bg-white uppercase rounded-[6px]"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-zinc-700">Mapped Field</Label>
+                <Select 
+                  value={newVarMappedField} 
+                  onValueChange={(val: any) => setNewVarMappedField(val)}
+                >
+                  <SelectTrigger className="h-9 border-blue-200 focus-visible:ring-blue-100 text-xs bg-white rounded-[6px]">
+                    <SelectValue placeholder="Select Field" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="length" className="text-xs">Length (L) (m)</SelectItem>
+                    <SelectItem value="width" className="text-xs">Width (W) (m)</SelectItem>
+                    <SelectItem value="holeSize" className="text-xs">Hole Size (HS) (mm)</SelectItem>
+                    <SelectItem value="holeDistHorizontal" className="text-xs">Horizontal Spacing (HHD) (mm)</SelectItem>
+                    <SelectItem value="holeDistVertical" className="text-xs">Vertical Spacing (VHD) (mm)</SelectItem>
+                    <SelectItem value="pricePerHole" className="text-xs">Price per Hole (PPH) (₹)</SelectItem>
+                    <SelectItem value="rate" className="text-xs">Rate of Component (R) (₹)</SelectItem>
+                    
+                    <SelectItem value="totalHoles" className="text-xs text-blue-700 bg-blue-50/20">Total Holes (Count)</SelectItem>
+                    <SelectItem value="holesH" className="text-xs text-blue-700 bg-blue-50/20">Horizontal Holes (Count)</SelectItem>
+                    <SelectItem value="holesV" className="text-xs text-blue-700 bg-blue-50/20">Vertical Holes (Count)</SelectItem>
+                    
+                    <SelectItem value="manualPackingCost" className="text-xs text-emerald-700 bg-emerald-50/20">Manual Packing Cost (₹)</SelectItem>
+                    <SelectItem value="manualProfitMargin" className="text-xs text-emerald-700 bg-emerald-50/20">Manual Profit Margin (%)</SelectItem>
+                    
+                    <SelectItem value="purchaseGst" className="text-xs text-indigo-700 bg-indigo-50/20">Purchase GST (%)</SelectItem>
+                    <SelectItem value="fixCost" className="text-xs text-indigo-700 bg-indigo-50/20">Fix Cost (₹)</SelectItem>
+                    <SelectItem value="defaultProfit" className="text-xs text-indigo-700 bg-indigo-50/20">Default Profit Margin (%)</SelectItem>
+                    <SelectItem value="saleGst" className="text-xs text-indigo-700 bg-indigo-50/20">Sale GST (%)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button 
+                onClick={handleAddVariable}
+                type="button"
+                className="bg-[#1e40af] hover:bg-[#1d4ed8] text-white h-9 text-xs font-bold rounded-[6px] cursor-pointer"
+              >
+                <Plus className="h-4 w-4 mr-1" /> Add Variable
+              </Button>
+            </div>
+
+            {/* List of configured variables */}
+            <div className="border border-blue-100 rounded-xl overflow-hidden text-xs">
+              <table className="min-w-full divide-y divide-blue-100">
+                <thead className="bg-blue-50/50">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-bold text-[#1e3a8a]">Variable Name</th>
+                    <th className="px-4 py-3 text-left font-bold text-[#1e3a8a] font-mono">Sign / Symbol</th>
+                    <th className="px-4 py-3 text-left font-bold text-[#1e3a8a]">Mapped Parameter</th>
+                    <th className="px-4 py-3 text-right font-bold text-[#1e3a8a] w-[80px]">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-blue-50 bg-white font-medium text-zinc-700">
+                  {/* Default fallback rows */}
+                  <tr className="bg-zinc-50/40 text-zinc-400">
+                    <td className="px-4 py-3 italic">Length (Default)</td>
+                    <td className="px-4 py-3 font-mono font-bold text-zinc-450">L</td>
+                    <td className="px-4 py-3">Length (m)</td>
+                    <td className="px-4 py-3 text-right italic text-[10px]">Reserved</td>
+                  </tr>
+                  <tr className="bg-zinc-50/40 text-zinc-400">
+                    <td className="px-4 py-3 italic">Width (Default)</td>
+                    <td className="px-4 py-3 font-mono font-bold text-zinc-450">W</td>
+                    <td className="px-4 py-3">Width (m)</td>
+                    <td className="px-4 py-3 text-right italic text-[10px]">Reserved</td>
+                  </tr>
+                  <tr className="bg-zinc-50/40 text-zinc-400">
+                    <td className="px-4 py-3 italic">Perimeter (Default)</td>
+                    <td className="px-4 py-3 font-mono font-bold text-zinc-450">P</td>
+                    <td className="px-4 py-3">Perimeter (m)</td>
+                    <td className="px-4 py-3 text-right italic text-[10px]">Reserved</td>
+                  </tr>
+                  <tr className="bg-zinc-50/40 text-zinc-400">
+                    <td className="px-4 py-3 italic">Rate of Component (Default)</td>
+                    <td className="px-4 py-3 font-mono font-bold text-zinc-450">R</td>
+                    <td className="px-4 py-3">Rate of Component (₹)</td>
+                    <td className="px-4 py-3 text-right italic text-[10px]">Reserved</td>
+                  </tr>
+
+                  {/* Custom variables */}
+                  {(() => {
+                    const allVars = getActiveBOMVariables();
+                    const filteredVars = allVars.filter((v: any) => v.forOptionName === (activeOptionName || undefined));
+                    
+                    if (filteredVars.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={4} className="px-4 py-4 text-center text-zinc-400 italic">
+                            No custom variables defined for this context. Add one above.
+                          </td>
+                        </tr>
+                      );
+                    }
+                    
+                    return filteredVars.map((v: any) => (
+                      <tr key={v.id} className="hover:bg-blue-50/10">
+                        <td className="px-4 py-3 font-bold text-zinc-800">{v.name}</td>
+                        <td className="px-4 py-3 font-mono font-black text-[#1e40af]">{v.symbol}</td>
+                        <td className="px-4 py-3">
+                          {v.mappedField === 'length' && 'Length (m)'}
+                          {v.mappedField === 'width' && 'Width (m)'}
+                          {v.mappedField === 'holeSize' && 'Hole Size (mm)'}
+                          {v.mappedField === 'holeDistHorizontal' && 'Horizontal Spacing (mm)'}
+                          {v.mappedField === 'holeDistVertical' && 'Vertical Spacing (mm)'}
+                          {v.mappedField === 'pricePerHole' && 'Price per Hole (₹)'}
+                          {v.mappedField === 'rate' && 'Rate of Component (₹)'}
+                          {v.mappedField === 'totalHoles' && 'Total Holes (Count)'}
+                          {v.mappedField === 'holesH' && 'Horizontal Holes (Count)'}
+                          {v.mappedField === 'holesV' && 'Vertical Holes (Count)'}
+                          {v.mappedField === 'manualPackingCost' && 'Manual Packing Cost (₹)'}
+                          {v.mappedField === 'manualProfitMargin' && 'Manual Profit Margin (%)'}
+                          {v.mappedField === 'purchaseGst' && 'Purchase GST (%)'}
+                          {v.mappedField === 'fixCost' && 'Fix Cost (₹)'}
+                          {v.mappedField === 'defaultProfit' && 'Default Profit Margin (%)'}
+                          {v.mappedField === 'saleGst' && 'Sale GST (%)'}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <Button 
+                            type="button"
+                            variant="ghost" 
+                            size="icon" 
+                            onClick={() => handleDeleteVariable(v.id, v.symbol)}
+                            className="h-7 w-7 text-zinc-400 hover:text-rose-500 hover:bg-rose-50 cursor-pointer rounded-full"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ));
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <DialogFooter className="bg-zinc-50 border-t p-4 flex gap-2">
+            <Button 
+              type="button"
+              onClick={() => setShowVariablesModal(false)} 
+              className="w-full bg-[#1e40af] text-white hover:bg-blue-800 rounded-[6px]" 
+              size="sm"
+            >
               Close
             </Button>
           </DialogFooter>

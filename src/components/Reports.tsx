@@ -125,7 +125,7 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
   }, []);
 
   // Helper: open date range dialog for a specific report
-  const openReportWithDatePicker = (card: 'overview' | 'purchase' | 'profitability' | 'company') => {
+  const openReportWithDatePicker = (card: 'overview' | 'purchase' | 'profitability' | 'company' | 'inventory') => {
     setPendingReportCard(card);
     const today = new Date();
     const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -271,32 +271,66 @@ export const Reports: React.FC<ReportsProps> = ({ config, clients }) => {
       .sort((a, b) => convertToDate(b.updatedAt || b.createdAt).getTime() - convertToDate(a.updatedAt || a.createdAt).getTime());
   }, [quotations, startDate, endDate, config, clients, selectedPreset]);
 
-const getCutDate = (cut: any): Date | null => {
-  if (cut.createdAt) {
-    const d = new Date(cut.createdAt);
-    if (!isNaN(d.getTime())) return d;
-  }
-  if (cut.date) {
-    const d = new Date(cut.date);
-    if (!isNaN(d.getTime())) return d;
-  }
-  if (cut.id && typeof cut.id === 'string' && cut.id.includes('-')) {
-    const parts = cut.id.split('-');
-    if (parts.length >= 2) {
-      const ts = parseInt(parts[1], 10);
-      if (!isNaN(ts) && ts > 1000000000000) {
-        return new Date(ts);
+  const quotationsMap = useMemo(() => {
+    const map = new Map<string, Quotation>();
+    quotations.forEach(q => {
+      if (q.id) map.set(String(q.id), q);
+      if (q.orderNumber !== undefined && q.orderNumber !== null) {
+        const numStr = String(q.orderNumber);
+        map.set(numStr, q);
+        map.set(`ORD-${numStr}`, q);
+        map.set(`#${numStr}`, q);
+      }
+    });
+    return map;
+  }, [quotations]);
+
+  const getCutDate = (cut: any, rollCreatedAt?: any): Date | null => {
+    if (cut.createdAt) {
+      const d = convertToDate(cut.createdAt);
+      if (d.getTime() > 0) return d;
+    }
+    if (cut.created_at) {
+      const d = convertToDate(cut.created_at);
+      if (d.getTime() > 0) return d;
+    }
+    if (cut.date) {
+      const d = convertToDate(cut.date);
+      if (d.getTime() > 0) return d;
+    }
+    if (cut.orderId || cut.soNumber) {
+      const qKey = String(cut.orderId || cut.soNumber);
+      const matchedQ = quotationsMap.get(qKey) || 
+                        quotationsMap.get(qKey.replace(/^#/, '')) || 
+                        quotationsMap.get(qKey.replace(/^ORD-/, '')) ||
+                        quotationsMap.get(`ORD-${qKey}`);
+      if (matchedQ) {
+        const qDate = convertToDate(matchedQ.updatedAt || matchedQ.createdAt);
+        if (qDate.getTime() > 0) return qDate;
       }
     }
-  }
-  return null;
-};
+    if (cut.id && typeof cut.id === 'string') {
+      const matches = cut.id.match(/17\d{11}/) || cut.id.match(/\d{13}/);
+      if (matches && matches[0]) {
+        const ts = parseInt(matches[0], 10);
+        if (!isNaN(ts) && ts > 1500000000000 && ts < 2000000000000) {
+          return new Date(ts);
+        }
+      }
+    }
+    if (rollCreatedAt) {
+      const rDate = convertToDate(rollCreatedAt);
+      if (rDate.getTime() > 0) return rDate;
+    }
+    return null;
+  };
 
   // Inventory: group rolls by materialType with date range cut statistics
   const inventoryByProduct = useMemo(() => {
     const active = rolls.filter(r => !r.isArchived && r.status !== 'refused');
-    const filteredOrderIds = new Set(filteredOrders.map(o => o.id));
-    const filteredOrderNumbers = new Set(filteredOrders.map(o => `#${o.orderNumber || ''}`));
+    const filteredOrderIds = new Set(filteredOrders.map(o => String(o.id)));
+    const filteredOrderNumbers = new Set(filteredOrders.map(o => String(o.orderNumber || '')));
+    const filteredOrderHashes = new Set(filteredOrders.map(o => `#${o.orderNumber || ''}`));
 
     const start = selectedPreset === 'all' ? new Date(0) : (startDate ? new Date(startDate) : new Date(0));
     start.setHours(0, 0, 0, 0);
@@ -310,12 +344,15 @@ const getCutDate = (cut: any): Date | null => {
       
       const cutsInRange = (r.cuts || []).filter((cut: any) => {
         if (selectedPreset === 'all') return true;
-        const cDate = getCutDate(cut);
+        const cDate = getCutDate(cut, null);
         if (cDate) {
           return cDate >= start && cDate <= end;
         }
-        if (cut.orderId && (filteredOrderIds.has(cut.orderId) || filteredOrderNumbers.has(cut.orderId))) {
-          return true;
+        if (cut.orderId) {
+          const oId = String(cut.orderId);
+          if (filteredOrderIds.has(oId) || filteredOrderNumbers.has(oId) || filteredOrderHashes.has(oId)) {
+            return true;
+          }
         }
         return false;
       });
@@ -330,13 +367,13 @@ const getCutDate = (cut: any): Date | null => {
       };
 
       map[key].rolls.push(rollWithStats);
-      map[key].totalRemaining += r.remainingSqm || 0;
-      map[key].totalSqm += r.totalSqm || 0;
+      map[key].totalRemaining += (r.remainingSqm || 0);
+      map[key].totalSqm += (r.totalSqm || 0);
       map[key].totalSqmCutInRange += sqmCutInRange;
       map[key].totalCutsInRange += cutsInRange.length;
     });
     return map;
-  }, [rolls, filteredOrders, selectedPreset, startDate, endDate]);
+  }, [rolls, filteredOrders, selectedPreset, startDate, endDate, quotationsMap]);
 
   // Aggregated calculations for Reports
   const totalMaterialSubtotal = useMemo(() => {
@@ -854,7 +891,7 @@ const getCutDate = (cut: any): Date | null => {
         </button>
 
         {/* Card 4: Inventory / Roll Balance */}
-        <button type="button" onClick={() => { setActiveReportCard('inventory'); setSelectedCompany('all'); }}
+        <button type="button" onClick={() => openReportWithDatePicker('inventory')}
           className={`group w-full text-left p-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer flex items-center gap-3 shadow-sm hover:shadow-md ${
             activeReportCard === 'inventory' ? 'bg-amber-600 border-amber-600 text-white shadow-lg scale-[1.01]' : 'bg-white border-zinc-200 hover:border-amber-400 hover:bg-amber-50/30'
           }`}>
@@ -883,6 +920,7 @@ const getCutDate = (cut: any): Date | null => {
               {pendingReportCard === 'purchase' && 'Select date range for Purchase Cost Report'}
               {pendingReportCard === 'profitability' && 'Select date range for Order Profitability Report'}
               {pendingReportCard === 'company' && 'Select date range for Company Sales Report'}
+              {pendingReportCard === 'inventory' && 'Select date range for Roll Balance Report'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -1380,6 +1418,8 @@ const getCutDate = (cut: any): Date | null => {
                         <TableHead className="w-[50px] text-center text-[10px] font-black uppercase text-zinc-500 pl-4">S.No</TableHead>
                         <TableHead className="text-[10px] font-black uppercase text-zinc-500">Product Name</TableHead>
                         <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-center">Active Rolls</TableHead>
+                        <TableHead className="text-[10px] font-black uppercase text-amber-700 bg-amber-50/70 text-right px-3">Cut In Date Range (sqm)</TableHead>
+                        <TableHead className="text-[10px] font-black uppercase text-orange-700 bg-orange-50/70 text-center px-3">Cuts Count</TableHead>
                         <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Total Remaining (sqm)</TableHead>
                         <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-right">Total Original (sqm)</TableHead>
                         <TableHead className="text-[10px] font-black uppercase text-zinc-500 text-center">Status / Remaining %</TableHead>
@@ -1409,6 +1449,14 @@ const getCutDate = (cut: any): Date | null => {
                               <TableCell className="text-center">
                                 <Badge variant="outline" className="bg-zinc-50 font-mono font-bold text-zinc-700 border-zinc-200">
                                   {data.rolls.length}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right font-mono font-black text-amber-700 bg-amber-50/30 px-3">
+                                {(data.totalSqmCutInRange || 0).toFixed(2)} sqm
+                              </TableCell>
+                              <TableCell className="text-center font-mono font-bold text-orange-700 bg-orange-50/30 px-3">
+                                <Badge variant="outline" className="bg-orange-100/60 text-orange-800 border-orange-300 font-mono font-bold">
+                                  {data.totalCutsInRange || 0}
                                 </Badge>
                               </TableCell>
                               <TableCell className="text-right font-mono font-bold text-amber-600">
@@ -1450,7 +1498,7 @@ const getCutDate = (cut: any): Date | null => {
                             </TableRow>
                             {isExpanded && (
                               <TableRow className="bg-zinc-50/10 hover:bg-transparent">
-                                <TableCell colSpan={7} className="p-0 border-t-0">
+                                <TableCell colSpan={9} className="p-0 border-t-0">
                                   <div className="p-4 bg-zinc-50/30 border-y border-zinc-100">
                                     <p className="text-[10px] font-black uppercase tracking-wider text-zinc-400 mb-2 px-2">
                                       Rollwise Breakup for {product}
