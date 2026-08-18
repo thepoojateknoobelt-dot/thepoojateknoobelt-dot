@@ -73,21 +73,26 @@ const parseLocaleDateString = (dateStr: string): Date | null => {
   }
 };
 
-const getStockStatusForDate = (item: ReadyBeltStock, targetDateStr: string) => {
-  if (!targetDateStr) {
+const getStockStatusForDateRange = (item: ReadyBeltStock, fromDateStr?: string, toDateStr?: string) => {
+  if (!fromDateStr && !toDateStr) {
     return {
       received: 0,
       issued: 0,
-      closing: item.openingPisc
+      closing: item.closingPisc !== undefined ? item.closingPisc : item.openingPisc
     };
   }
 
-  const dateParts = targetDateStr.split('-');
-  const targetYear = parseInt(dateParts[0], 10);
-  const targetMonth = parseInt(dateParts[1], 10) - 1;
-  const targetDay = parseInt(dateParts[2], 10);
-  
-  const targetDateEnd = new Date(targetYear, targetMonth, targetDay, 23, 59, 59, 999);
+  let fromDateStart: Date | null = null;
+  if (fromDateStr) {
+    const parts = fromDateStr.split('-');
+    fromDateStart = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 0, 0, 0, 0);
+  }
+
+  let toDateEnd: Date | null = null;
+  if (toDateStr) {
+    const parts = toDateStr.split('-');
+    toDateEnd = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 23, 59, 59, 999);
+  }
 
   let receivedOnDate = 0;
   let issuedOnDate = 0;
@@ -98,16 +103,15 @@ const getStockStatusForDate = (item: ReadyBeltStock, targetDateStr: string) => {
     const logDate = parseLocaleDateString(log.dateTime);
     if (!logDate) return;
 
-    const isSameDay = logDate.getFullYear() === targetYear &&
-                      logDate.getMonth() === targetMonth &&
-                      logDate.getDate() === targetDay;
+    const afterFrom = !fromDateStart || logDate >= fromDateStart;
+    const beforeTo = !toDateEnd || logDate <= toDateEnd;
 
-    if (isSameDay) {
+    if (afterFrom && beforeTo) {
       if (log.recvQty) receivedOnDate += log.recvQty;
       if (log.issuesQty) issuedOnDate += log.issuesQty;
     }
 
-    if (logDate > targetDateEnd) {
+    if (toDateEnd && logDate > toDateEnd) {
       if (log.recvQty) recvAfter += log.recvQty;
       if (log.issuesQty) issueAfter += log.issuesQty;
     }
@@ -120,6 +124,10 @@ const getStockStatusForDate = (item: ReadyBeltStock, targetDateStr: string) => {
     issued: issuedOnDate,
     closing: closingAtDate
   };
+};
+
+const getStockStatusForDate = (item: ReadyBeltStock, targetDateStr: string) => {
+  return getStockStatusForDateRange(item, targetDateStr, targetDateStr);
 };
 
 const isInventoryCutName = (name?: string) => {
@@ -289,6 +297,8 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
   // Search states for individual Inventory Tables
   const [overviewSearchQuery, setOverviewSearchQuery] = useState('');
   const [materialSearchQuery, setMaterialSearchQuery] = useState('');
+  const [materialFromDate, setMaterialFromDate] = useState('');
+  const [materialToDate, setMaterialToDate] = useState('');
   const [remnantSearchQuery, setRemnantSearchQuery] = useState('');
   const [freshRollSearchQuery, setFreshRollSearchQuery] = useState('');
   const [reorderSearchQuery, setReorderSearchQuery] = useState('');
@@ -363,6 +373,9 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
   const [readyBeltStocks, setReadyBeltStocks] = useState<ReadyBeltStock[]>([]);
   const [readyBeltSearchQuery, setReadyBeltSearchQuery] = useState('');
   const [readyBeltDateFilter, setReadyBeltDateFilter] = useState('');
+  const [readyBeltFromDate, setReadyBeltFromDate] = useState('');
+  const [readyBeltToDate, setReadyBeltToDate] = useState('');
+  const [readyBeltStockFilter, setReadyBeltStockFilter] = useState('');
   const [showAddReadyBeltForm, setShowAddReadyBeltForm] = useState(false);
   const [newReadyBeltStock, setNewReadyBeltStock] = useState({
     category: 'BROWN BELT',
@@ -421,6 +434,325 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
     } catch (err) {
       console.error("Failed to fetch material types:", err);
     }
+  };
+
+  // Stock Registry CSV Export Handlers
+  const handleExportReadyBeltStockCSV = () => {
+    if (!readyBeltStocks || readyBeltStocks.length === 0) {
+      toast.error('No ready belt stocks available to export.');
+      return;
+    }
+
+    const fromLabel = readyBeltFromDate || 'Start';
+    const toLabel = readyBeltToDate || 'Today';
+    const beltFilterLabel = readyBeltStockFilter && readyBeltStockFilter !== 'ALL' ? readyBeltStockFilter : 'All Belt Stocks';
+
+    const metadata = [
+      ['READY BELT STOCK REPORT'],
+      ['DATE RANGE', `${fromLabel} to ${toLabel}`],
+      ['BELT STOCK FILTER', beltFilterLabel],
+      ['SEARCH QUERY', readyBeltSearchQuery || 'None'],
+      ['EXPORTED AT', new Date().toLocaleString('en-IN')],
+      []
+    ];
+
+    const isDateActive = readyBeltDateRangeSummary.isDateActive;
+    const headers = isDateActive ? [
+      'Sr.No', 'Category', 'Belt Stock Name', 'Size', 'Opening (Pcs)', 'Received (Pcs)', 'Issued (Pcs)', 'Closing Pcs', 'SO No', 'Receiver Name'
+    ] : [
+      'Sr.No', 'Category', 'Belt Stock Name', 'Size', 'Opening Pcs', 'SO No', 'Receiver Name'
+    ];
+
+    const rows: string[][] = [];
+    let srNo = 1;
+    let grandOpening = 0;
+    let grandReceived = 0;
+    let grandIssued = 0;
+    let grandClosing = 0;
+
+    filteredReadyBeltStocksList.forEach((item: any) => {
+      if (isDateActive) {
+        const stats = getStockStatusForDateRange(item, readyBeltDateRangeSummary.effectiveFrom, readyBeltDateRangeSummary.effectiveTo);
+        grandOpening += item.openingPisc || 0;
+        grandReceived += stats.received;
+        grandIssued += stats.issued;
+        grandClosing += stats.closing;
+
+        rows.push([
+          (srNo++).toString(),
+          item.category || '',
+          item.beltStock || '',
+          item.size || '',
+          (item.openingPisc || 0).toString(),
+          stats.received.toString(),
+          stats.issued.toString(),
+          stats.closing.toString(),
+          item.soNo || '-',
+          item.receiverName || '-'
+        ]);
+      } else {
+        grandOpening += item.openingPisc || 0;
+        rows.push([
+          (srNo++).toString(),
+          item.category || '',
+          item.beltStock || '',
+          item.size || '',
+          (item.openingPisc || 0).toString(),
+          item.soNo || '-',
+          item.receiverName || '-'
+        ]);
+      }
+    });
+
+    if (isDateActive) {
+      rows.push([
+        'GRAND TOTAL', '', '', '',
+        grandOpening.toString(),
+        grandReceived.toString(),
+        grandIssued.toString(),
+        grandClosing.toString(),
+        '', ''
+      ]);
+    } else {
+      rows.push([
+        'GRAND TOTAL', '', '', '',
+        grandOpening.toString(),
+        '', ''
+      ]);
+    }
+
+    const csvContent = [...metadata, headers, ...rows]
+      .map(r => r.map(cell => `"${(cell || '').toString().replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ready_belt_stock_report_${readyBeltFromDate || 'all'}_to_${readyBeltToDate || 'today'}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success('Ready Belt Stock CSV report exported successfully!');
+  };
+
+  const handleExportMaterialStockCSV = () => {
+    if (!materialStocks || materialStocks.length === 0) {
+      toast.error('No material stocks available to export.');
+      return;
+    }
+
+    const fromLabel = materialFromDate || 'Start';
+    const toLabel = materialToDate || 'Today';
+    const isDateActive = Boolean(materialFromDate || materialToDate);
+
+    const metadata = [
+      ['MATERIAL STOCKS PERIOD & INVENTORY REPORT'],
+      ['DATE RANGE', `${fromLabel} to ${toLabel}`],
+      ['SEARCH QUERY', materialSearchQuery || 'None'],
+      ['EXPORTED AT', new Date().toLocaleString('en-IN')],
+      []
+    ];
+
+    const start = materialFromDate ? new Date(materialFromDate) : new Date(0);
+    start.setHours(0, 0, 0, 0);
+    const end = materialToDate ? new Date(materialToDate) : new Date();
+    end.setHours(23, 59, 59, 999);
+
+    const headers = isDateActive ? [
+      'Sr.No', 'Material Name', 'Issued In Range', 'Current Available Stock', 'Unit', 'Lots Count', 'Lot Breakdown Details', 'Reorder Level', 'Status'
+    ] : [
+      'Sr.No', 'Material Name', 'Current Available Stock', 'Unit', 'Lots Count', 'Lot Breakdown Details', 'Reorder Level', 'Status'
+    ];
+
+    const rows: string[][] = [];
+    let srNo = 1;
+    let grandTotalQty = 0;
+    let grandTotalIssued = 0;
+
+    filteredMaterialStocksList.forEach((item: any) => {
+      grandTotalQty += item.quantity || 0;
+
+      // Calculate material issues in date range
+      const issuesInRange = (materialIssues || []).filter((issue: any) => {
+        const matchId = issue.materialId === item.id || issue.materialName?.toLowerCase() === item.name?.toLowerCase();
+        if (!matchId) return false;
+        if (!isDateActive) return true;
+        const iDate = issue.issuedAt ? new Date(issue.issuedAt) : null;
+        if (iDate && !isNaN(iDate.getTime())) {
+          return iDate >= start && iDate <= end;
+        }
+        return true;
+      });
+
+      const totalIssuedInRange = issuesInRange.reduce((sum: number, i: any) => sum + (parseFloat(i.quantity) || 0), 0);
+      grandTotalIssued += totalIssuedInRange;
+
+      const lotCount = item.lots ? item.lots.length : 0;
+      let pieceDetails = '';
+      if (item.lots && item.lots.length > 0) {
+        pieceDetails = item.lots.map((l: any, i: number) => {
+          const pieceW = (l.pieces || []).map((p: any) => `${p.weight || 0}${item.unit || 'kg'}`).join('+');
+          return `Lot #${l.lotNo || i + 1}: ${pieceW}`;
+        }).join(' | ');
+      }
+      const isLow = item.reorderLevel > 0 && item.quantity <= item.reorderLevel;
+
+      if (isDateActive) {
+        rows.push([
+          (srNo++).toString(),
+          item.name || '',
+          totalIssuedInRange.toFixed(2),
+          (item.quantity || 0).toString(),
+          item.unit || 'pcs',
+          lotCount.toString(),
+          pieceDetails || '-',
+          (item.reorderLevel || 0).toString(),
+          isLow ? 'LOW STOCK ALERT' : 'NORMAL'
+        ]);
+      } else {
+        rows.push([
+          (srNo++).toString(),
+          item.name || '',
+          (item.quantity || 0).toString(),
+          item.unit || 'pcs',
+          lotCount.toString(),
+          pieceDetails || '-',
+          (item.reorderLevel || 0).toString(),
+          isLow ? 'LOW STOCK ALERT' : 'NORMAL'
+        ]);
+      }
+    });
+
+    if (isDateActive) {
+      rows.push([
+        'GRAND TOTAL', '', grandTotalIssued.toFixed(2), grandTotalQty.toFixed(2), '', '', '', '', ''
+      ]);
+    } else {
+      rows.push([
+        'GRAND TOTAL', '', grandTotalQty.toFixed(2), '', '', '', '', ''
+      ]);
+    }
+
+    const csvContent = [...metadata, headers, ...rows]
+      .map(r => r.map(cell => `"${(cell || '').toString().replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `material_stocks_report_${materialFromDate || 'all'}_to_${materialToDate || 'today'}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success('Material Stock CSV report exported successfully!');
+  };
+
+  const handleExportCuttingBeltCSV = () => {
+    const remnants = rolls.filter(r => r.status !== 'refused' && isRollReuse(r));
+    if (remnants.length === 0) {
+      toast.error('No cutting belt remnants available to export.');
+      return;
+    }
+
+    const metadata = [
+      ['CUTTING BELT REMNANTS REPORT'],
+      ['TOTAL REMNANTS', remnants.length.toString()],
+      ['EXPORTED AT', new Date().toLocaleString('en-IN')],
+      []
+    ];
+
+    const headers = ['Sr.No', 'Roll ID', 'Material Type', 'Width (mm)', 'Length (mm)', 'Remaining SqM', 'Total SqM', 'Cuts Count', 'Status'];
+    const rows: string[][] = [];
+    let srNo = 1;
+    let totalRemSqm = 0;
+
+    remnants.forEach((r: any) => {
+      totalRemSqm += r.remainingSqm || 0;
+      rows.push([
+        (srNo++).toString(),
+        r.id || '',
+        r.materialType || '',
+        ((r.fullWidth || 0) * 1000).toFixed(0),
+        ((r.fullLength || 0) * 1000).toFixed(0),
+        (r.remainingSqm || 0).toFixed(2),
+        (r.totalSqm || 0).toFixed(2),
+        (r.cuts ? r.cuts.length : 0).toString(),
+        'REUSE REMNANT'
+      ]);
+    });
+
+    rows.push(['GRAND TOTAL', '', '', '', '', totalRemSqm.toFixed(2), '', '', '']);
+
+    const csvContent = [...metadata, headers, ...rows]
+      .map(row => row.map(cell => `"${(cell || '').toString().replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `cutting_belt_remnants_report.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success('Cutting Belt Remnants CSV report exported!');
+  };
+
+  const handleExportFreshRollsCSV = () => {
+    const fresh = rolls.filter(r => r.status !== 'refused' && !isRollReuse(r));
+    if (fresh.length === 0) {
+      toast.error('No fresh master rolls available to export.');
+      return;
+    }
+
+    const metadata = [
+      ['FRESH MASTER ROLLS REPORT'],
+      ['TOTAL MASTER ROLLS', fresh.length.toString()],
+      ['EXPORTED AT', new Date().toLocaleString('en-IN')],
+      []
+    ];
+
+    const headers = ['Sr.No', 'Roll ID', 'Material Type', 'Width (mm)', 'Length (mm)', 'Remaining SqM', 'Total Original SqM', 'Cuts Count', 'Used %'];
+    const rows: string[][] = [];
+    let srNo = 1;
+    let totalRemSqm = 0;
+    let totalOriginalSqm = 0;
+
+    fresh.forEach((r: any) => {
+      totalRemSqm += r.remainingSqm || 0;
+      totalOriginalSqm += r.totalSqm || 0;
+      const usedPct = r.totalSqm > 0 ? (((r.totalSqm - r.remainingSqm) / r.totalSqm) * 100).toFixed(1) : '0';
+
+      rows.push([
+        (srNo++).toString(),
+        r.id || '',
+        r.materialType || '',
+        ((r.fullWidth || 0) * 1000).toFixed(0),
+        ((r.fullLength || 0) * 1000).toFixed(0),
+        (r.remainingSqm || 0).toFixed(2),
+        (r.totalSqm || 0).toFixed(2),
+        (r.cuts ? r.cuts.length : 0).toString(),
+        `${usedPct}%`
+      ]);
+    });
+
+    rows.push(['GRAND TOTAL', '', '', '', '', totalRemSqm.toFixed(2), totalOriginalSqm.toFixed(2), '', '']);
+
+    const csvContent = [...metadata, headers, ...rows]
+      .map(row => row.map(cell => `"${(cell || '').toString().replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `fresh_master_rolls_report.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success('Fresh Master Rolls CSV report exported!');
   };
 
   const handleAddCustomMaterialType = async () => {
@@ -3072,17 +3404,57 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
     );
   }, [materialStocks, materialSearchQuery]);
 
+  const readyBeltStockNames = useMemo(() => {
+    const names = new Set<string>();
+    readyBeltStocks.forEach(item => {
+      if (item.beltStock && item.beltStock.trim()) {
+        names.add(item.beltStock.trim());
+      }
+    });
+    return Array.from(names).sort();
+  }, [readyBeltStocks]);
+
   const filteredReadyBeltStocksList = useMemo(() => {
-    if (!readyBeltSearchQuery) return readyBeltStocks;
-    const query = readyBeltSearchQuery.toLowerCase().trim();
-    return readyBeltStocks.filter(item =>
-      (item.category || '').toLowerCase().includes(query) ||
-      (item.beltStock || '').toLowerCase().includes(query) ||
-      (item.size || '').toLowerCase().includes(query) ||
-      (item.soNo || '').toLowerCase().includes(query) ||
-      (item.receiverName || '').toLowerCase().includes(query)
-    );
-  }, [readyBeltStocks, readyBeltSearchQuery]);
+    return readyBeltStocks.filter(item => {
+      if (readyBeltStockFilter && readyBeltStockFilter !== 'ALL' && item.beltStock !== readyBeltStockFilter) {
+        return false;
+      }
+      if (readyBeltSearchQuery) {
+        const query = readyBeltSearchQuery.toLowerCase().trim();
+        const matches = (item.category || '').toLowerCase().includes(query) ||
+          (item.beltStock || '').toLowerCase().includes(query) ||
+          (item.size || '').toLowerCase().includes(query) ||
+          (item.soNo || '').toLowerCase().includes(query) ||
+          (item.receiverName || '').toLowerCase().includes(query);
+        if (!matches) return false;
+      }
+      return true;
+    });
+  }, [readyBeltStocks, readyBeltSearchQuery, readyBeltStockFilter]);
+
+  const readyBeltDateRangeSummary = useMemo(() => {
+    const effectiveFrom = readyBeltFromDate || readyBeltDateFilter;
+    const effectiveTo = readyBeltToDate || readyBeltDateFilter;
+    const isDateActive = Boolean(effectiveFrom || effectiveTo);
+
+    let totalReceived = 0;
+    let totalIssued = 0;
+
+    filteredReadyBeltStocksList.forEach(item => {
+      const stats = getStockStatusForDateRange(item, effectiveFrom, effectiveTo);
+      totalReceived += stats.received;
+      totalIssued += stats.issued;
+    });
+
+    return {
+      effectiveFrom,
+      effectiveTo,
+      totalReceived,
+      totalIssued,
+      isDateActive,
+      hasFilter: isDateActive || Boolean(readyBeltStockFilter && readyBeltStockFilter !== 'ALL')
+    };
+  }, [filteredReadyBeltStocksList, readyBeltFromDate, readyBeltToDate, readyBeltDateFilter, readyBeltStockFilter]);
 
   const readyBeltGroups = useMemo(() => {
     const groups: Record<string, ReadyBeltStock[]> = {};
@@ -4998,16 +5370,63 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                       </div>
                     )}
 
-                    {/* Searcher */}
-                    <div className="relative mb-4">
-                      <Search className="absolute left-3.5 top-3 h-4 w-4 text-zinc-400" />
-                      <input
-                        type="text"
-                        placeholder="Search Material Stocks..."
-                        value={materialSearchQuery}
-                        onChange={(e) => setMaterialSearchQuery(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-zinc-950 placeholder-zinc-400 shadow-sm text-left"
-                      />
+                    {/* Searcher & Date Filter & Export Bar */}
+                    <div className="flex flex-col sm:flex-row items-center gap-3 mb-4">
+                      <div className="relative flex-1 w-full">
+                        <Search className="absolute left-3.5 top-3 h-4 w-4 text-zinc-400" />
+                        <input
+                          type="text"
+                          placeholder="Search Material Stocks..."
+                          value={materialSearchQuery}
+                          onChange={(e) => setMaterialSearchQuery(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-zinc-950 placeholder-zinc-400 shadow-sm text-left"
+                        />
+                      </div>
+
+                      {/* Date Range Filter (From Date & To Date) */}
+                      <div className="flex items-center gap-2 bg-slate-50 border border-zinc-200 rounded-xl px-3 py-1.5 shadow-sm w-full sm:w-auto">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider whitespace-nowrap">From:</span>
+                          <input
+                            type="date"
+                            value={materialFromDate}
+                            onChange={(e) => setMaterialFromDate(e.target.value)}
+                            className="border-none bg-transparent text-xs font-bold text-zinc-950 focus:outline-none cursor-pointer"
+                          />
+                        </div>
+                        <span className="text-zinc-400 text-xs font-bold">➔</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider whitespace-nowrap">To:</span>
+                          <input
+                            type="date"
+                            value={materialToDate}
+                            onChange={(e) => setMaterialToDate(e.target.value)}
+                            className="border-none bg-transparent text-xs font-bold text-zinc-950 focus:outline-none cursor-pointer"
+                          />
+                        </div>
+                        {(materialFromDate || materialToDate) && (
+                          <button
+                            onClick={() => {
+                              setMaterialFromDate('');
+                              setMaterialToDate('');
+                            }}
+                            className="text-xs font-bold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 px-2 py-0.5 rounded-lg cursor-pointer ml-1 transition"
+                            title="Clear Dates"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Export CSV Button */}
+                      <button
+                        type="button"
+                        onClick={handleExportMaterialStockCSV}
+                        className="bg-[#1e40af] hover:bg-[#1d4ed8] text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0 transition w-full sm:w-auto justify-center"
+                        title="Export Material Stocks to CSV/Excel"
+                      >
+                        <Download size={14} /> Export CSV
+                      </button>
                     </div>
 
                     {/* Table */}
@@ -5492,8 +5911,9 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                       </div>
                     )}
 
-                    {/* Searcher & Date Picker */}
-                    <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                    {/* Searcher, Belt Stock Filter & Date Range Picker */}
+                    <div className="flex flex-col lg:flex-row gap-3 mb-4">
+                      {/* Search Input */}
                       <div className="relative flex-1">
                         <Search className="absolute left-3.5 top-3 h-4 w-4 text-zinc-400" />
                         <input
@@ -5504,25 +5924,109 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                           className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-zinc-200 rounded-xl text-xs font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-zinc-950 placeholder-zinc-400 shadow-sm text-left"
                         />
                       </div>
-                      <div className="flex items-center gap-2 bg-slate-50 border border-zinc-200 rounded-xl px-3 py-1.5 shadow-sm">
-                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider whitespace-nowrap">Filter by Date</label>
-                        <input
-                          type="date"
-                          value={readyBeltDateFilter}
-                          onChange={(e) => setReadyBeltDateFilter(e.target.value)}
-                          className="border-none bg-transparent text-xs font-bold text-zinc-950 focus:outline-none cursor-pointer"
-                        />
-                        {readyBeltDateFilter && (
+
+                      {/* Belt Stock Wise Filter Dropdown */}
+                      <div className="flex items-center gap-2 bg-slate-50 border border-zinc-200 rounded-xl px-3 py-1.5 shadow-sm min-w-[200px]">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider whitespace-nowrap">Belt Stock:</label>
+                        <select
+                          value={readyBeltStockFilter}
+                          onChange={(e) => setReadyBeltStockFilter(e.target.value)}
+                          className="w-full bg-transparent text-xs font-bold text-zinc-950 focus:outline-none cursor-pointer"
+                        >
+                          <option value="ALL">ALL BELT STOCKS</option>
+                          {readyBeltStockNames.map(name => (
+                            <option key={name} value={name}>{name}</option>
+                          ))}
+                        </select>
+                        {readyBeltStockFilter && readyBeltStockFilter !== 'ALL' && (
                           <button
-                            onClick={() => setReadyBeltDateFilter('')}
+                            onClick={() => setReadyBeltStockFilter('ALL')}
                             className="text-xs font-bold text-slate-400 hover:text-slate-650 px-1 cursor-pointer"
-                            title="Clear Date Filter"
+                            title="Clear Belt Stock Filter"
                           >
                             ✕
                           </button>
                         )}
                       </div>
+
+                      {/* Date Range Picker (From Date & To Date) */}
+                      <div className="flex flex-wrap items-center gap-2 bg-slate-50 border border-zinc-200 rounded-xl px-3 py-1.5 shadow-sm">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider whitespace-nowrap">From:</span>
+                          <input
+                            type="date"
+                            value={readyBeltFromDate}
+                            onChange={(e) => setReadyBeltFromDate(e.target.value)}
+                            className="border-none bg-transparent text-xs font-bold text-zinc-950 focus:outline-none cursor-pointer"
+                          />
+                        </div>
+                        <span className="text-zinc-400 text-xs font-bold">➔</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider whitespace-nowrap">To:</span>
+                          <input
+                            type="date"
+                            value={readyBeltToDate}
+                            onChange={(e) => setReadyBeltToDate(e.target.value)}
+                            className="border-none bg-transparent text-xs font-bold text-zinc-950 focus:outline-none cursor-pointer"
+                          />
+                        </div>
+                        {(readyBeltFromDate || readyBeltToDate || readyBeltDateFilter) && (
+                          <button
+                            onClick={() => {
+                              setReadyBeltFromDate('');
+                              setReadyBeltToDate('');
+                              setReadyBeltDateFilter('');
+                            }}
+                            className="text-xs font-bold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 px-2 py-0.5 rounded-lg cursor-pointer ml-1 transition"
+                            title="Clear Date Range Filter"
+                          >
+                            Clear Dates ✕
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Export CSV / Excel Button */}
+                      <button
+                        type="button"
+                        onClick={handleExportReadyBeltStockCSV}
+                        className="bg-[#1e40af] hover:bg-[#1d4ed8] text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0 transition"
+                        title="Export Ready Belt Stock to CSV/Excel"
+                      >
+                        <Download size={14} /> Export CSV
+                      </button>
                     </div>
+
+                    {/* Summary Banner Card when filtering by Date or Belt Stock */}
+                    {readyBeltDateRangeSummary.hasFilter && (
+                      <div className="mb-5 p-4 bg-gradient-to-r from-amber-50/80 via-cyan-50/50 to-emerald-50/80 border border-amber-200/70 rounded-2xl shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-1">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 rounded-md bg-amber-100 border border-amber-300 text-[10px] font-black text-amber-900 uppercase tracking-wider">
+                              Filtered Summary Report
+                            </span>
+                            {readyBeltDateRangeSummary.isDateActive && (
+                              <span className="text-xs font-bold text-slate-700 font-mono">
+                                📅 {readyBeltDateRangeSummary.effectiveFrom || 'Start'} to {readyBeltDateRangeSummary.effectiveTo || 'Today'}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-600 font-medium">
+                            Belt Stock: <strong className="text-slate-900 font-black">{readyBeltStockFilter && readyBeltStockFilter !== 'ALL' ? readyBeltStockFilter : 'All Belt Stocks'}</strong>
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="px-3.5 py-2 bg-white/90 border border-amber-200 rounded-xl shadow-xs text-center">
+                            <span className="block text-[9px] font-black text-amber-600 uppercase tracking-widest">Total Issued (Diya)</span>
+                            <span className="text-base font-black text-amber-700 font-mono">-{readyBeltDateRangeSummary.totalIssued} Pcs</span>
+                          </div>
+                          <div className="px-3.5 py-2 bg-white/90 border border-emerald-200 rounded-xl shadow-xs text-center">
+                            <span className="block text-[9px] font-black text-emerald-600 uppercase tracking-widest">Total Received</span>
+                            <span className="text-base font-black text-emerald-700 font-mono">+{readyBeltDateRangeSummary.totalReceived} Pcs</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Grouped Table */}
                     <div className="space-y-6">
@@ -5543,11 +6047,11 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                   <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest w-12">Sr.No</th>
                                   <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Belt Stock</th>
                                   <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Size</th>
-                                  {readyBeltDateFilter ? (
+                                  {readyBeltDateRangeSummary.isDateActive ? (
                                     <>
                                       <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Received</th>
-                                      <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Issued</th>
-                                      <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Closing Pcs</th>
+                                      <th className="px-4 py-3 text-[9px] font-black text-amber-600 uppercase tracking-widest text-center">Issued (Diya)</th>
+                                      <th className="px-4 py-3 text-[9px] font-black text-cyan-600 uppercase tracking-widest text-center">Closing Pcs</th>
                                     </>
                                   ) : (
                                     <th className="px-4 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Opening Pcs</th>
@@ -5614,15 +6118,15 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                             <td className="px-4 py-3 font-bold text-slate-400">{idx + 1}</td>
                                             <td className="px-4 py-3 font-black text-sm text-slate-800">{item.beltStock}</td>
                                             <td className="px-4 py-3 font-mono font-bold text-slate-650">{item.size}</td>
-                                            {readyBeltDateFilter ? (
+                                            {readyBeltDateRangeSummary.isDateActive ? (
                                               (() => {
-                                                const stats = getStockStatusForDate(item, readyBeltDateFilter);
+                                                const stats = getStockStatusForDateRange(item, readyBeltDateRangeSummary.effectiveFrom, readyBeltDateRangeSummary.effectiveTo);
                                                 return (
                                                   <>
                                                     <td className="px-4 py-3 text-center font-bold text-slate-600">
                                                       {stats.received > 0 ? `+${stats.received}` : '-'}
                                                     </td>
-                                                    <td className="px-4 py-3 text-center font-bold text-amber-600">
+                                                    <td className="px-4 py-3 text-center font-black text-amber-600 bg-amber-50/30">
                                                       {stats.issued > 0 ? `-${stats.issued}` : '-'}
                                                     </td>
                                                     <td className="px-4 py-3 text-center font-black text-cyan-600 bg-cyan-50/50">
@@ -5643,7 +6147,7 @@ export const BeltcutPro: React.FC<BeltcutProProps> = ({ onBackToMaster }) => {
                                                 >
                                                   <Info size={11} /> Details
                                                 </button>
-                                                {!readyBeltDateFilter && (
+                                                {!readyBeltDateRangeSummary.isDateActive && (
                                                   <>
                                                     <button
                                                       onClick={() => {

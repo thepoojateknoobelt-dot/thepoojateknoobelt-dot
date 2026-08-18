@@ -62,9 +62,19 @@ export const findGlobalBestPlacement = (rolls: Roll[], order: Order): Optimizati
       });
     }
 
-    // Sort by score descending. If scores are equal, prefer lower X (earlier in roll)
+    // Sort candidates:
+    // 1. By score descending (if difference > 1000 pts)
+    // 2. By roll total area ascending (prefer SMALLEST fitting roll first to clear small rolls & eliminate scrub)
+    // 3. By lower X position
     const sorted = candidates.sort((a, b) => {
-      if (Math.abs(b.score - a.score) > 0.1) return b.score - a.score;
+      if (Math.abs(b.score - a.score) > 1000) return b.score - a.score;
+      const rollA = compatibleRolls.find(r => r.id === a.rollId);
+      const rollB = compatibleRolls.find(r => r.id === b.rollId);
+      const areaA = rollA ? (rollA.fullWidth * rollA.fullLength) : 99999;
+      const areaB = rollB ? (rollB.fullWidth * rollB.fullLength) : 99999;
+      if (Math.abs(areaA - areaB) > 0.01) {
+        return areaA - areaB; // Smallest roll first!
+      }
       return a.placement.x - b.placement.x;
     });
 
@@ -94,45 +104,100 @@ const calculatePrecisionScore = (roll: Roll, order: Order, placement: { x: numbe
   const { x, y } = placement;
   const { requiredWidth, requiredLength } = order;
 
-  // Remnant Size Match Check (Hinglish: "phelee inventory m check karne ke is size ka koi hai ki nhi")
+  // Remnant & Small Roll Identification
   const isRemnant = roll.isReuse === true || (roll.id && (roll.id.startsWith('REUSE-') || roll.id.startsWith('INV-') || roll.id.startsWith('SCRAP-')));
+  const isSmallOrShortRoll = isRemnant || roll.fullLength <= 15 || roll.fullWidth <= 1.5;
+  const isGiantMasterRoll = roll.fullLength > 15 && roll.fullWidth >= 2;
+  const isFreshMasterRoll = (roll.cuts || []).length === 0 && isGiantMasterRoll;
+
+  const cutArea = requiredWidth * requiredLength;
+  const usedArea = (roll.cuts || []).reduce((acc, c) => acc + (c.width * c.length), 0);
+  const totalRollArea = roll.fullWidth * roll.fullLength;
+  const remainingRollArea = Math.max(0.001, totalRollArea - usedArea);
+  const fitRatio = Math.min(1.0, cutArea / remainingRollArea);
+
+  // 0. STRICT SMALL ROLL & REUSE FIRST TIERING
+  if (isRemnant) {
+    score += 50000; // Guaranteed Top Tier for REUSE / Remnant Stock
+    reasons.push("REUSE STOCK FIRST");
+  } else if (isSmallOrShortRoll) {
+    score += 45000; // High Tier for Small Rolls (PTB01-2, PTB01-3, etc.)
+    reasons.push("SMALL ROLL FIRST");
+  } else if ((roll.cuts || []).length > 0 && !isGiantMasterRoll) {
+    score += 30000; // Tier for Open Small Rolls
+    reasons.push("OPEN SMALL ROLL REUSE");
+  } else if ((roll.cuts || []).length > 0 && isGiantMasterRoll) {
+    score += 5000; // Low bonus for open giant master rolls
+    reasons.push("OPEN GIANT MASTER ROLL");
+  } else {
+    // Fresh Giant Roll gets 0 tier bonus (used only as last resort)
+    reasons.push("FRESH GIANT ROLL (LAST RESORT)");
+  }
+
+  // 1. Remnant / Small Roll Priority & Best-Fit Scoring
   if (isRemnant) {
     const widthDiff = roll.fullWidth - requiredWidth;
     const lengthDiff = roll.fullLength - requiredLength;
 
     // Perfect Match: within 2cm in both dimensions
     if (Math.abs(widthDiff) < 0.02 && Math.abs(lengthDiff) < 0.02) {
-      score += 20000; // Put at the absolute top
+      score += 25000; // Put at the absolute top
       reasons.push("PERFECT REMNANT MATCH (Zero Waste)");
     }
     // Close Match: within 10% extra width and length
     else if (widthDiff >= 0 && widthDiff < 0.1 * requiredWidth && lengthDiff >= 0 && lengthDiff < 0.1 * requiredLength) {
-      score += 10000;
+      score += 18000;
       reasons.push("EXACT SIZE REMNANT MATCH");
     }
     // Close length match with exact width
     else if (Math.abs(widthDiff) < 0.02 && lengthDiff >= 0 && lengthDiff < 0.5) {
-      score += 8000;
+      score += 15000;
       reasons.push("NEAR-PERFECT REMNANT MATCH");
     }
   }
 
-  // 1. Position Penalty (Heavy preference for the start of the roll)
-  // Every meter further into the roll reduces the score
+  // Small Roll / Remnant Best Fit Bonus (Prioritize small rolls for small cuts)
+  if (isSmallOrShortRoll) {
+    if (fitRatio > 0.05) {
+      const bestFitBonus = Math.round(fitRatio * 15000);
+      score += 15000 + bestFitBonus;
+      reasons.push(`Small Roll Best Fit (${Math.round(fitRatio * 100)}% utilization)`);
+    } else {
+      score += 12000;
+      reasons.push("Small Roll / Remnant Priority");
+    }
+  }
+
+  // Fresh Master Roll Preservation Penalty (Avoid cutting small pieces from a brand new big roll)
+  if (isFreshMasterRoll) {
+    if (cutArea < 3.0 || fitRatio < 0.15) {
+      score -= 20000;
+      reasons.push("Preserve Fresh Master Roll");
+    }
+  }
+
+  // 2. Position Penalty (Preference for start of the roll)
   score -= (x * 100);
 
-  // 1.5. Roll Extension Penalty (Prefer filling the roll width/columns first before moving along the length)
+  // 3. Roll Extension Penalty
   const currentMaxX = roll.cuts.length > 0 
     ? Math.max(...roll.cuts.map(c => c.x + c.length)) 
     : 0;
   const newMaxX = x + requiredLength;
   const extension = Math.max(0, newMaxX - currentMaxX);
   if (extension > 0.01) {
-    score -= (extension * 5000);
-    reasons.push(`Extends roll length by ${extension.toFixed(2)}m`);
+    if (isFreshMasterRoll) {
+      score -= (extension * 5000);
+      reasons.push(`Extends master roll length by ${extension.toFixed(2)}m`);
+    } else if (isSmallOrShortRoll) {
+      // Soft penalty for small rolls so empty small remnants aren't unfairly penalized
+      score -= (extension * 200);
+    } else {
+      score -= (extension * 2000);
+    }
   }
 
-  // 2. Edge Alignment (Top or Bottom)
+  // 4. Edge Alignment (Top or Bottom)
   const hitsTopEdge = Math.abs(y) < 0.01;
   const hitsBottomEdge = Math.abs((y + requiredWidth) - roll.fullWidth) < 0.01;
 
@@ -144,13 +209,13 @@ const calculatePrecisionScore = (roll: Roll, order: Order, placement: { x: numbe
     reasons.push("Bottom Edge Aligned");
   }
 
-  // 3. Perfect Width Match (The most "manageable" cut)
+  // 5. Perfect Width Match (The most "manageable" cut)
   if (hitsTopEdge && hitsBottomEdge) {
     score += 3000;
     reasons.push("Full Width Cut");
   }
 
-  // 4. Snugness (Touching existing cuts)
+  // 6. Snugness (Touching existing cuts)
   let touchesExisting = false;
   let alignmentBonus = 0;
 
@@ -178,24 +243,15 @@ const calculatePrecisionScore = (roll: Roll, order: Order, placement: { x: numbe
     if (alignmentBonus > 0) reasons.push("Rectangular Remnant");
   }
 
-  // 5. Scrap Risk (Avoid leaving thin strips)
+  // 7. Scrap Risk (Eliminate Scrub: Heavy Penalty for leaving thin unusable strips)
   const topGap = y;
   const bottomGap = roll.fullWidth - (y + requiredWidth);
   const MIN_MANAGEABLE_WIDTH = 0.3; // 300mm is usually the minimum usable belt width
 
   if ((topGap > 0.01 && topGap < MIN_MANAGEABLE_WIDTH) ||
     (bottomGap > 0.01 && bottomGap < MIN_MANAGEABLE_WIDTH)) {
-    score -= 5000;
+    score -= 100000; // Massive penalty so scrap-creating cuts NEVER sit at Rank #1 when clean options exist
     reasons.push("CRITICAL: Scrap Risk");
-  }
-
-  // 6. Remnant Usage Bonus
-  // Prioritize remnants or rolls with existing cuts over fresh master rolls
-  // to encourage utilizing available stock before starting a fresh roll.
-  const isRemnantOrOpen = isRemnant || roll.cuts.length > 0;
-  if (isRemnantOrOpen) {
-    score += 8000;
-    reasons.push("Remnant Priority");
   }
 
   return {
