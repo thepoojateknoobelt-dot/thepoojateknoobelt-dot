@@ -294,16 +294,16 @@ export const calculateCosting = (data: any, config: any, clientProfitRanges: Pro
     ? Number(selectedCategory.gst)
     : null;
 
-  const applicablePurchaseGst = categoryGst !== null ? categoryGst : constants.purchaseGst;
-  const applicableSaleGst     = categoryGst !== null ? categoryGst : constants.saleGst;
+  const applicableSaleGst = categoryGst !== null ? categoryGst : (constants?.saleGst ?? 18);
 
-  const purchaseGstAmount = Math.round(subtotal * (applicablePurchaseGst / 100));
-  const totalWithPurchaseGst = Math.round(subtotal + purchaseGstAmount);
+  // Purchase GST concept removed: Subtotal directly used for Fix Cost
+  const purchaseGstAmount = 0;
+  const totalWithPurchaseGst = subtotal;
   
   const applicableFixCost = selectedCategory?.fixCost !== undefined ? selectedCategory.fixCost : constants.fixCost;
   
-  const fixCostAmount = Math.round(totalWithPurchaseGst * (applicableFixCost / 100));
-  const totalWithFixCost = Math.round(totalWithPurchaseGst + fixCostAmount);
+  const fixCostAmount = Math.round(subtotal * (applicableFixCost / 100));
+  const totalWithFixCost = Math.round(subtotal + fixCostAmount);
   
   let resolvedClientMargin = 0;
   if (Array.isArray(clientProfitRanges) && clientProfitRanges.length > 0) {
@@ -319,26 +319,29 @@ export const calculateCosting = (data: any, config: any, clientProfitRanges: Pro
   const profitAmount = Math.round(totalWithFixCost * (profitMargin / 100));
   const totalWithProfit = Math.round(totalWithFixCost + profitAmount);
   
-  const saleGstAmount = Math.round(totalWithProfit * (applicableSaleGst / 100));
-  const finalTotal = Math.round(totalWithProfit + saleGstAmount + packingCost);
+  // Packaging Charge added BEFORE GST (Taxable Amount = Base Price + Packaging Charge)
+  const taxableSubtotal = Math.round(totalWithProfit + packingCost);
+  const saleGstAmount = Math.round(taxableSubtotal * (applicableSaleGst / 100));
+  const finalTotal = Math.round(taxableSubtotal + saleGstAmount);
 
   return {
     breakdown,
     summary: {
       subtotal,
-      purchaseGst: purchaseGstAmount,
-      purchaseGstPercent: applicablePurchaseGst,
-      totalWithPurchaseGst,
+      purchaseGst: 0,
+      purchaseGstPercent: 0,
+      totalWithPurchaseGst: subtotal,
       fixCost: fixCostAmount,
       fixCostPercentage: applicableFixCost,
       totalWithFixCost,
       profit: profitAmount,
       profitMarginUsed: profitMargin,
       totalWithProfit,
+      packingCost,
+      taxableSubtotal,
       saleGst: saleGstAmount,
       saleGstPercent: applicableSaleGst,
       gstPercent: categoryGst !== null ? categoryGst : null, // applied category GST or null if global
-      packingCost,
       finalTotal,
       hasHoles,
       totalHoles,

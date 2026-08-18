@@ -1565,43 +1565,47 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                 {user?.role === 'admin' && result.summary && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
-                      <div className="h-1 w-1 rounded-full bg-[#1e40af]" />
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-600">Price Summary</h3>
+                      <div className="h-1.5 w-1.5 rounded-full bg-slate-900" />
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-700">Detailed Price Breakdown</h3>
                     </div>
-                    <div className="border border-zinc-100 rounded-lg overflow-x-auto shadow-sm">
+                    <div className="border border-zinc-200 rounded-lg overflow-x-auto shadow-sm">
                       <Table>
                         <TableBody>
-                          <TableRow className="hover:bg-zinc-50/30 transition-colors h-8">
+                          <TableRow className="hover:bg-zinc-50/50 transition-colors h-8">
                             <TableCell className="font-medium text-xs py-1.5">Material Subtotal</TableCell>
                             <TableCell className="text-right font-mono text-xs py-1.5">{formatCurrency(result.summary.subtotal)}</TableCell>
                           </TableRow>
-                          <TableRow className="text-zinc-500 hover:bg-zinc-50/30 transition-colors h-7">
-                            <TableCell className="text-[10px] pl-6 py-1">Purchase GST ({result.summary.purchaseGstPercent ?? config.constants.purchaseGst}%)</TableCell>
-                            <TableCell className="text-right font-mono text-[10px] py-1">{formatCurrency(result.summary.purchaseGst)}</TableCell>
-                          </TableRow>
-                          <TableRow className="bg-zinc-50/30 font-semibold border-y border-zinc-100 h-8">
-                            <TableCell className="text-xs py-1.5">Total Landed Cost</TableCell>
-                            <TableCell className="text-right font-mono text-xs py-1.5">{formatCurrency(result.summary.totalWithPurchaseGst)}</TableCell>
-                          </TableRow>
-                          <TableRow className="text-zinc-500 hover:bg-zinc-50/30 transition-colors h-7">
+                          <TableRow className="text-zinc-600 hover:bg-zinc-50/50 transition-colors h-7">
                             <TableCell className="text-[10px] pl-6 py-1">Fix Cost ({result.summary.fixCostPercentage}%)</TableCell>
                             <TableCell className="text-right font-mono text-[10px] py-1">{formatCurrency(result.summary.fixCost)}</TableCell>
                           </TableRow>
-                          <TableRow className="text-zinc-500 hover:bg-zinc-50/30 transition-colors border-b border-zinc-100 h-7">
+                          <TableRow className="bg-zinc-50/50 font-semibold border-y border-zinc-200 h-8">
+                            <TableCell className="text-xs py-1.5">Subtotal with Fix Cost</TableCell>
+                            <TableCell className="text-right font-mono text-xs py-1.5">{formatCurrency(result.summary.totalWithFixCost)}</TableCell>
+                          </TableRow>
+                          <TableRow className="text-zinc-600 hover:bg-zinc-50/50 transition-colors border-b border-zinc-100 h-7">
                             <TableCell className="text-[10px] pl-6 py-1">Profit Margin ({result.summary.profitMarginUsed}%)</TableCell>
                             <TableCell className="text-right font-mono text-[10px] py-1">{formatCurrency(result.summary.profit)}</TableCell>
                           </TableRow>
-                          <TableRow className="text-zinc-500 hover:bg-zinc-50/30 transition-colors h-7">
-                            <TableCell className="text-[10px] pl-6 py-1">Sale GST ({result.summary.saleGstPercent ?? config.constants.saleGst}%)</TableCell>
-                            <TableCell className="text-right font-mono text-[10px] py-1">{formatCurrency(result.summary.saleGst)}</TableCell>
+                          <TableRow className="bg-zinc-100/70 font-bold text-zinc-900 border-b border-zinc-200 h-8">
+                            <TableCell className="text-xs py-1.5">Base Price (Total with Profit)</TableCell>
+                            <TableCell className="text-right font-mono text-xs py-1.5">{formatCurrency(result.summary.totalWithProfit)}</TableCell>
                           </TableRow>
-                          <TableRow className="text-zinc-500 hover:bg-zinc-50/30 transition-colors h-7 border-b border-zinc-100">
-                            <TableCell className="text-[10px] pl-6 py-1">Packing Charge</TableCell>
-                            <TableCell className="text-right font-mono text-[10px] py-1">{formatCurrency(result.summary.packingCost)}</TableCell>
+                          <TableRow className="text-amber-900 bg-amber-50/60 hover:bg-amber-100/50 transition-colors h-7">
+                            <TableCell className="text-[10px] pl-6 py-1 font-semibold">+ Packaging Charge (Before GST)</TableCell>
+                            <TableCell className="text-right font-mono text-[10px] font-bold py-1">+{formatCurrency(result.summary.packingCost)}</TableCell>
                           </TableRow>
-                          <TableRow className="bg-[#1e40af] text-white font-bold h-11 hover:bg-[#1d4ed8]">
-                            <TableCell className="text-sm py-2">Final Selling Price</TableCell>
-                            <TableCell className="text-right text-lg font-mono py-2">{formatCurrency(result.summary.finalTotal)}</TableCell>
+                          <TableRow className="bg-indigo-50/70 font-bold text-indigo-950 border-y border-indigo-200 h-8">
+                            <TableCell className="text-xs py-1.5">Taxable Subtotal (Before GST)</TableCell>
+                            <TableCell className="text-right font-mono text-xs py-1.5">{formatCurrency(result.summary.taxableSubtotal || (result.summary.totalWithProfit + result.summary.packingCost))}</TableCell>
+                          </TableRow>
+                          <TableRow className="text-blue-900 hover:bg-blue-50/50 transition-colors h-7 border-b border-zinc-200">
+                            <TableCell className="text-[10px] pl-6 py-1 font-semibold">+ GST ({result.summary.saleGstPercent ?? config.constants.saleGst}%)</TableCell>
+                            <TableCell className="text-right font-mono text-[10px] font-bold py-1">+{formatCurrency(result.summary.saleGst)}</TableCell>
+                          </TableRow>
+                          <TableRow className="bg-slate-900 text-white font-bold h-11 hover:bg-slate-800 transition-colors">
+                            <TableCell className="text-sm py-2 pl-4">Final Selling Price (Incl. GST)</TableCell>
+                            <TableCell className="text-right text-lg font-mono py-2 pr-4 text-emerald-400">{formatCurrency(result.summary.finalTotal)}</TableCell>
                           </TableRow>
                         </TableBody>
                       </Table>
@@ -1609,37 +1613,47 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-zinc-50 p-4 rounded-xl border border-zinc-100 shadow-inner">
-                  <div className="flex flex-col justify-center p-4 bg-[#1e40af] rounded-lg text-white shadow-sm overflow-hidden relative col-span-2">
-                    <p className="text-zinc-400 text-[9px] font-black uppercase tracking-[0.2em] mb-2">Price Summary</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-zinc-50 p-4 rounded-xl border border-zinc-200 shadow-sm">
+                  <div className="flex flex-col justify-center p-5 bg-slate-900 rounded-xl text-white shadow-md border border-slate-800 relative col-span-2 space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                      <p className="text-slate-300 text-[10px] font-black uppercase tracking-[0.2em]">Calculation Summary</p>
+                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded-full border border-emerald-500/30">Before-GST Packaging</span>
+                    </div>
                     
                     {user?.role === 'admin' ? (
-                      <div className="flex flex-col gap-0.5">
-                        <div className="flex items-baseline gap-1.5">
-                          <span className="text-2xl font-black tracking-tight">{formatCurrency(result.summary.totalWithProfit)}</span>
-                          <span className="text-zinc-500 text-[10px] font-bold uppercase">Base</span>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-1">
+                        <div className="bg-slate-800/80 p-2.5 rounded-lg border border-slate-700/60">
+                          <span className="text-slate-400 text-[10px] font-bold block uppercase tracking-wider">Base Price</span>
+                          <span className="text-sm sm:text-base font-black text-white font-mono">{formatCurrency(result.summary.totalWithProfit)}</span>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-zinc-400 font-mono text-sm">+{formatCurrency(result.summary.saleGst)}</span>
-                          <span className="text-zinc-500 text-[10px] font-bold uppercase italic">GST ({result.summary.saleGstPercent ?? config.constants.saleGst}%)</span>
+                        <div className="bg-amber-950/40 p-2.5 rounded-lg border border-amber-500/30">
+                          <span className="text-amber-300 text-[10px] font-bold block uppercase tracking-wider">+ Packaging</span>
+                          <span className="text-sm sm:text-base font-black text-amber-200 font-mono">+{formatCurrency(result.summary.packingCost)}</span>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-zinc-400 font-mono text-sm">+{formatCurrency(result.summary.packingCost)}</span>
-                          <span className="text-zinc-500 text-[10px] font-bold uppercase">Packing</span>
+                        <div className="bg-indigo-950/40 p-2.5 rounded-lg border border-indigo-500/30">
+                          <span className="text-indigo-300 text-[10px] font-bold block uppercase tracking-wider">Taxable Total</span>
+                          <span className="text-sm sm:text-base font-black text-indigo-200 font-mono">{formatCurrency(result.summary.taxableSubtotal || (result.summary.totalWithProfit + result.summary.packingCost))}</span>
+                        </div>
+                        <div className="bg-sky-950/40 p-2.5 rounded-lg border border-sky-500/30">
+                          <span className="text-sky-300 text-[10px] font-bold block uppercase tracking-wider">+ GST ({result.summary.saleGstPercent ?? config.constants.saleGst}%)</span>
+                          <span className="text-sm sm:text-base font-black text-sky-200 font-mono">+{formatCurrency(result.summary.saleGst)}</span>
                         </div>
                       </div>
                     ) : (
-                      <div className="py-2">
-                        <p className="text-xs text-zinc-400 leading-normal">
-                          Total estimated belt selling price including taxes and packaging charges.
+                      <div className="py-1">
+                        <p className="text-xs text-slate-300 leading-normal">
+                          Total estimated belt selling price including taxes and pre-GST packaging charges.
                         </p>
                       </div>
                     )}
 
-                    <div className="mt-3 pt-3 border-t border-white/10">
+                    <div className="pt-3 border-t border-slate-800">
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Net Total</span>
-                        <span className="text-xl font-black text-emerald-400">{formatCurrency(result.summary.finalTotal)}</span>
+                        <div>
+                          <span className="text-xs font-black uppercase tracking-wider text-slate-200 block">Net Total Selling Price</span>
+                          <span className="text-[10px] text-slate-400 font-medium">Inclusive of all charges & GST</span>
+                        </div>
+                        <span className="text-xl sm:text-2xl font-black text-emerald-400 font-mono tracking-tight bg-emerald-950/50 px-3 py-1 rounded-lg border border-emerald-500/30">{formatCurrency(result.summary.finalTotal)}</span>
                       </div>
                     </div>
                   </div>
