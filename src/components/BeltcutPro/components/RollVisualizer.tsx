@@ -399,6 +399,21 @@ const RollVisualizer: React.FC<RollVisualizerProps> = ({
               )}
             </g>
 
+            {/* X-axis (LENGTH) axis label */}
+            <g transform={`translate(${RULER_SIZE}, 0)`}>
+              <text
+                x={viewWidth / 2}
+                y={12}
+                textAnchor="middle"
+                fontSize="8"
+                fontWeight="900"
+                fill="#6366f1"
+                letterSpacing="2"
+              >
+                ← LENGTH →
+              </text>
+            </g>
+
             <g transform={`translate(0, ${RULER_SIZE})`}>
               <rect width={RULER_SIZE} height={viewHeight} fill="#f8fafc" stroke="#e2e8f0" />
               {minorTicksY.map(t => {
@@ -438,114 +453,141 @@ const RollVisualizer: React.FC<RollVisualizerProps> = ({
                   </text>
                 </g>
               )}
+              {/* Rotated WIDTH axis label */}
+              <text
+                x={0}
+                y={viewHeight / 2}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fontSize="8"
+                fontWeight="900"
+                fill="#6366f1"
+                letterSpacing="2"
+                transform={`rotate(-90, 10, ${viewHeight / 2})`}
+              >
+                ↑ WIDTH ↑
+              </text>
             </g>
 
             <g transform={`translate(${RULER_SIZE}, ${RULER_SIZE})`}>
               <rect width={viewWidth} height={viewHeight} fill="#ffffff" stroke="#cbd5e1" strokeWidth="1" />
 
-              {resolvedCuts.map((cut) => (
-                <g 
-                  key={cut.id} 
-                  onClick={(e) => {
-                    // Stop propagation so clicking on a cut doesn't trigger manual placement on the container
-                    e.stopPropagation();
-                    onSelectCut?.(cut);
-                  }} 
-                  className={onSelectCut ? "cursor-pointer hover:opacity-80 transition-opacity" : ""}
-                >
-                  <title>{`Client: ${cut.customerName}${cut.soNumber ? `\nS.O. No: ${cut.soNumber}` : ''}\nSize: ${formatVal(cut.length)}${unit} x ${formatVal(cut.width)}${unit}${onSelectCut ? '\nClick to delete cut' : ''}`}</title>
-                  <rect 
-                    x={cut.x * SCALE} 
-                    y={cut.y * SCALE} 
-                    width={cut.length * SCALE} 
-                    height={cut.width * SCALE} 
-                    fill={cut.isInventoryCut ? '#1e293b' : (cut.color || '#334155')} 
-                    fillOpacity="0.9" 
-                    stroke="#0f172a" 
-                    strokeWidth="2" 
-                    rx="4" 
-                  />
-                  <text 
-                    x={(cut.x + cut.length / 2) * SCALE} 
-                    y={(cut.y + cut.width / 2) * SCALE} 
-                    textAnchor="middle" 
-                    dominantBaseline="middle" 
-                    fontSize="9.5" 
-                    fontWeight="black" 
-                    fill="white"
-                  >
-                    {!cut.soNumber ? (
-                      <>
-                        <tspan x={(cut.x + cut.length / 2) * SCALE} dy="-5">
-                          {cut.isInventoryCut ? 'REUSE' : cut.customerName.substring(0, 12)}
-                        </tspan>
-                        <tspan x={(cut.x + cut.length / 2) * SCALE} dy="13" fontSize="8" fontWeight="black" fill="rgba(255, 255, 255, 0.85)">
-                          {`${formatVal(cut.length)}${unit} x ${formatVal(cut.width)}${unit}`}
-                        </tspan>
-                      </>
-                    ) : (
-                      <>
-                        <tspan x={(cut.x + cut.length / 2) * SCALE} dy="-10">
-                          {cut.isInventoryCut ? 'REUSE' : cut.customerName.substring(0, 12)}
-                        </tspan>
-                        <tspan x={(cut.x + cut.length / 2) * SCALE} dy="11" fontSize="8" fontWeight="black" fill="rgba(255, 255, 255, 0.85)">
-                          {cut.soNumber}
-                        </tspan>
-                        <tspan x={(cut.x + cut.length / 2) * SCALE} dy="11" fontSize="7.5" fontWeight="bold" fill="rgba(255, 255, 255, 0.75)">
-                          {`${formatVal(cut.length)}${unit} x ${formatVal(cut.width)}${unit}`}
-                        </tspan>
-                      </>
-                    )}
-                  </text>
+              {resolvedCuts.map((cut) => {
+                const rectWidthPx = cut.length * SCALE;
+                const rectHeightPx = cut.width * SCALE;
+                const hasSoNumber = !!cut.soNumber;
+                const minHeightNeeded = hasSoNumber ? 34 : 24;
+                const minWidthNeeded = 50;
+                const showText = rectHeightPx >= minHeightNeeded && rectWidthPx >= minWidthNeeded;
+                const dynamicStrokeWidth = Math.max(0.5, Math.min(2, rectHeightPx * 0.15));
+                const dynamicRx = Math.max(0.5, Math.min(4, rectHeightPx * 0.2));
 
-                  {/* Width indicator — inside-left of each cut */}
-                  {cut.width * SCALE > 22 && (() => {
-                    // Place INSIDE the cut, 10px from left edge
-                    const cx = cut.x * SCALE + 10;
-                    const topY = cut.y * SCALE + 4;
-                    const botY = (cut.y + cut.width) * SCALE - 4;
-                    const midY = (cut.y + cut.width / 2) * SCALE;
-                    const labelW = 28;
-                    const labelH = 12;
-                    return (
-                      <g style={{ pointerEvents: 'none' }}>
-                        {/* Top segment of vertical line */}
-                        <line x1={cx} y1={topY} x2={cx} y2={midY - labelH / 2 - 2} stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" />
-                        {/* Bottom segment of vertical line */}
-                        <line x1={cx} y1={midY + labelH / 2 + 2} x2={cx} y2={botY} stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" />
-                        {/* Top cap */}
-                        <line x1={cx - 4} y1={topY} x2={cx + 4} y2={topY} stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" />
-                        {/* Bottom cap */}
-                        <line x1={cx - 4} y1={botY} x2={cx + 4} y2={botY} stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" />
-                        {/* Pill background for label */}
-                        <rect
-                          x={cx - labelH / 2}
-                          y={midY - labelW / 2}
-                          width={labelH}
-                          height={labelW}
-                          rx={5}
-                          fill="rgba(0,0,0,0.45)"
-                          transform={`rotate(-90, ${cx}, ${midY})`}
-                        />
-                        {/* Width label rotated 90° */}
-                        <text
-                          x={cx}
-                          y={midY}
-                          textAnchor="middle"
-                          dominantBaseline="middle"
-                          fontSize="8"
-                          fontWeight="900"
-                          fill="white"
-                          transform={`rotate(-90, ${cx}, ${midY})`}
-                          style={{ letterSpacing: '0.3px' }}
-                        >
-                          {`${formatVal(cut.width)}${unit}`}
-                        </text>
-                      </g>
-                    );
-                  })()}
-                </g>
-              ))}
+                return (
+                  <g 
+                    key={cut.id} 
+                    onClick={(e) => {
+                      // Stop propagation so clicking on a cut doesn't trigger manual placement on the container
+                      e.stopPropagation();
+                      onSelectCut?.(cut);
+                    }} 
+                    className={onSelectCut ? "cursor-pointer hover:opacity-80 transition-opacity" : ""}
+                  >
+                    <title>{`Client: ${cut.customerName}${cut.soNumber ? `\nS.O. No: ${cut.soNumber}` : ''}\nSize: ${formatVal(cut.length)}${unit} x ${formatVal(cut.width)}${unit}${onSelectCut ? '\nClick to delete cut' : ''}`}</title>
+                    <rect 
+                      x={cut.x * SCALE} 
+                      y={cut.y * SCALE} 
+                      width={rectWidthPx} 
+                      height={rectHeightPx} 
+                      fill={cut.isInventoryCut ? '#1e293b' : (cut.color || '#334155')} 
+                      fillOpacity="0.9" 
+                      stroke="#0f172a" 
+                      strokeWidth={dynamicStrokeWidth} 
+                      rx={dynamicRx} 
+                    />
+                    {showText && (
+                      <text 
+                        x={(cut.x + cut.length / 2) * SCALE} 
+                        y={(cut.y + cut.width / 2) * SCALE} 
+                        textAnchor="middle" 
+                        dominantBaseline="middle" 
+                        fontSize="9.5" 
+                        fontWeight="black" 
+                        fill="white"
+                      >
+                        {!cut.soNumber ? (
+                          <>
+                            <tspan x={(cut.x + cut.length / 2) * SCALE} dy="-5">
+                              {cut.isInventoryCut ? 'REUSE' : cut.customerName.substring(0, 12)}
+                            </tspan>
+                            <tspan x={(cut.x + cut.length / 2) * SCALE} dy="13" fontSize="8" fontWeight="black" fill="rgba(255, 255, 255, 0.85)">
+                              {`${formatVal(cut.length)}${unit} x ${formatVal(cut.width)}${unit}`}
+                            </tspan>
+                          </>
+                        ) : (
+                          <>
+                            <tspan x={(cut.x + cut.length / 2) * SCALE} dy="-10">
+                              {cut.isInventoryCut ? 'REUSE' : cut.customerName.substring(0, 12)}
+                            </tspan>
+                            <tspan x={(cut.x + cut.length / 2) * SCALE} dy="11" fontSize="8" fontWeight="black" fill="rgba(255, 255, 255, 0.85)">
+                              {cut.soNumber}
+                            </tspan>
+                            <tspan x={(cut.x + cut.length / 2) * SCALE} dy="11" fontSize="7.5" fontWeight="bold" fill="rgba(255, 255, 255, 0.75)">
+                              {`${formatVal(cut.length)}${unit} x ${formatVal(cut.width)}${unit}`}
+                            </tspan>
+                          </>
+                        )}
+                      </text>
+                    )}
+
+                    {/* Width indicator — inside-left of each cut */}
+                    {cut.width * SCALE > 22 && (() => {
+                      // Place INSIDE the cut, 10px from left edge
+                      const cx = cut.x * SCALE + 10;
+                      const topY = cut.y * SCALE + 4;
+                      const botY = (cut.y + cut.width) * SCALE - 4;
+                      const midY = (cut.y + cut.width / 2) * SCALE;
+                      const labelW = 28;
+                      const labelH = 12;
+                      return (
+                        <g style={{ pointerEvents: 'none' }}>
+                          {/* Top segment of vertical line */}
+                          <line x1={cx} y1={topY} x2={cx} y2={midY - labelH / 2 - 2} stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" />
+                          {/* Bottom segment of vertical line */}
+                          <line x1={cx} y1={midY + labelH / 2 + 2} x2={cx} y2={botY} stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" />
+                          {/* Top cap */}
+                          <line x1={cx - 4} y1={topY} x2={cx + 4} y2={topY} stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" />
+                          {/* Bottom cap */}
+                          <line x1={cx - 4} y1={botY} x2={cx + 4} y2={botY} stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" />
+                          {/* Pill background for label */}
+                          <rect
+                            x={cx - labelH / 2}
+                            y={midY - labelW / 2}
+                            width={labelH}
+                            height={labelW}
+                            rx={5}
+                            fill="rgba(0,0,0,0.45)"
+                            transform={`rotate(-90, ${cx}, ${midY})`}
+                          />
+                          {/* Width label rotated 90° */}
+                          <text
+                            x={cx}
+                            y={midY}
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                            fontSize="8"
+                            fontWeight="900"
+                            fill="white"
+                            transform={`rotate(-90, ${cx}, ${midY})`}
+                            style={{ letterSpacing: '0.3px' }}
+                          >
+                            {`${formatVal(cut.width)}${unit}`}
+                          </text>
+                        </g>
+                      );
+                    })()}
+                  </g>
+                );
+              })}
 
               {/* Manual mode live guidelines */}
               {manualMode && mousePos && (
@@ -574,65 +616,81 @@ const RollVisualizer: React.FC<RollVisualizerProps> = ({
               )}
 
               {/* Manual mode live ghost preview */}
-              {manualMode && mousePos && manualDimensions && (
-                <g style={{ pointerEvents: 'none' }}>
-                  <rect
-                    x={mousePos.x * SCALE}
-                    y={mousePos.y * SCALE}
-                    width={manualDimensions.length * SCALE}
-                    height={manualDimensions.width * SCALE}
-                    fill={isValidPos ? 'url(#suggested-pattern-manual)' : 'url(#suggested-pattern-invalid)'}
-                    stroke={isValidPos ? '#3b82f6' : '#ef4444'}
-                    strokeWidth="3"
-                    strokeDasharray="8,4"
-                    rx="4"
-                  />
-                  {/* Display dimensions/coords on the ghost preview */}
-                  <rect
-                    x={mousePos.x * SCALE + 6}
-                    y={mousePos.y * SCALE + 6}
-                    width="100"
-                    height="28"
-                    rx="4"
-                    fill="rgba(15, 23, 42, 0.85)"
-                  />
-                  <text
-                    x={mousePos.x * SCALE + 12}
-                    y={mousePos.y * SCALE + 18}
-                    fontSize="8.5"
-                    fontWeight="black"
-                    fill="#60a5fa"
-                  >
-                    Pos: {formatVal(mousePos.x)}{unit}, {formatVal(mousePos.y)}{unit}
-                  </text>
-                  <text
-                    x={mousePos.x * SCALE + 12}
-                    y={mousePos.y * SCALE + 28}
-                    fontSize="7.5"
-                    fontWeight="bold"
-                    fill="white"
-                  >
-                    Size: {formatVal(manualDimensions.length)}{unit} × {formatVal(manualDimensions.width)}{unit}
-                  </text>
-                </g>
-              )}
+              {manualMode && mousePos && manualDimensions && (() => {
+                const ghostWidthPx = manualDimensions.length * SCALE;
+                const ghostHeightPx = manualDimensions.width * SCALE;
+                const dynamicGhostStrokeWidth = Math.max(0.5, Math.min(3, ghostHeightPx * 0.3));
+                const dynamicGhostRx = Math.max(0.5, Math.min(4, ghostHeightPx * 0.2));
+                return (
+                  <g style={{ pointerEvents: 'none' }}>
+                    <rect
+                      x={mousePos.x * SCALE}
+                      y={mousePos.y * SCALE}
+                      width={ghostWidthPx}
+                      height={ghostHeightPx}
+                      fill={isValidPos ? 'url(#suggested-pattern-manual)' : 'url(#suggested-pattern-invalid)'}
+                      stroke={isValidPos ? '#3b82f6' : '#ef4444'}
+                      strokeWidth={dynamicGhostStrokeWidth}
+                      strokeDasharray="8,4"
+                      rx={dynamicGhostRx}
+                    />
+                    {/* Display dimensions/coords on the ghost preview if height is reasonable */}
+                    {ghostHeightPx >= 25 && (
+                      <>
+                        <rect
+                          x={mousePos.x * SCALE + 6}
+                          y={mousePos.y * SCALE + 6}
+                          width="100"
+                          height="28"
+                          rx="4"
+                          fill="rgba(15, 23, 42, 0.85)"
+                        />
+                        <text
+                          x={mousePos.x * SCALE + 12}
+                          y={mousePos.y * SCALE + 18}
+                          fontSize="8.5"
+                          fontWeight="black"
+                          fill="#60a5fa"
+                        >
+                          Pos: {formatVal(mousePos.x)}{unit}, {formatVal(mousePos.y)}{unit}
+                        </text>
+                        <text
+                          x={mousePos.x * SCALE + 12}
+                          y={mousePos.y * SCALE + 28}
+                          fontSize="7.5"
+                          fontWeight="bold"
+                          fill="white"
+                        >
+                          Size: {formatVal(manualDimensions.length)}{unit} × {formatVal(manualDimensions.width)}{unit}
+                        </text>
+                      </>
+                    )}
+                  </g>
+                );
+              })()}
 
-              {suggestedPlacement && (
-                <g className="animate-in fade-in zoom-in duration-300">
-                  <rect 
-                    x={suggestedPlacement.x * SCALE} 
-                    y={suggestedPlacement.y * SCALE} 
-                    width={suggestedPlacement.length * SCALE} 
-                    height={suggestedPlacement.width * SCALE} 
-                    fill={manualMode ? (isSuggestedValid ? "url(#suggested-pattern-manual)" : "url(#suggested-pattern-invalid)") : "url(#suggested-pattern-auto)"} 
-                    stroke={manualMode ? (isSuggestedValid ? "#3b82f6" : "#ef4444") : "#10b981"} 
-                    strokeWidth="5" 
-                    strokeDasharray="10,5" 
-                    className="animate-pulse" 
-                    rx="6"
-                  />
-                </g>
-              )}
+              {suggestedPlacement && (() => {
+                const suggWidthPx = suggestedPlacement.length * SCALE;
+                const suggHeightPx = suggestedPlacement.width * SCALE;
+                const dynamicSuggStrokeWidth = Math.max(1, Math.min(5, suggHeightPx * 0.3));
+                const dynamicSuggRx = Math.max(1, Math.min(6, suggHeightPx * 0.25));
+                return (
+                  <g className="animate-in fade-in zoom-in duration-300">
+                    <rect 
+                      x={suggestedPlacement.x * SCALE} 
+                      y={suggestedPlacement.y * SCALE} 
+                      width={suggWidthPx} 
+                      height={suggHeightPx} 
+                      fill={manualMode ? (isSuggestedValid ? "url(#suggested-pattern-manual)" : "url(#suggested-pattern-invalid)") : "url(#suggested-pattern-auto)"} 
+                      stroke={manualMode ? (isSuggestedValid ? "#3b82f6" : "#ef4444") : "#10b981"} 
+                      strokeWidth={dynamicSuggStrokeWidth} 
+                      strokeDasharray="10,5" 
+                      className="animate-pulse" 
+                      rx={dynamicSuggRx}
+                    />
+                  </g>
+                );
+              })()}
             </g>
           </svg>
         </div>

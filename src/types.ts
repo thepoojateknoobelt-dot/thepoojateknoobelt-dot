@@ -99,7 +99,6 @@ export interface Config {
   awsServerUrl?: string;
   beltCutProUrl?: string;
   variables?: CustomVariable[];
-  currency?: string;
 }
 
 
@@ -193,7 +192,7 @@ export interface Quotation {
 }
 
 export interface AuditLog {
-  id?: string;
+  id: string;
   timestamp: any;
   userId: string;
   userName: string;

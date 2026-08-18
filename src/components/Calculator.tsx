@@ -28,6 +28,8 @@ const formatOrderDate = (dateVal: any, showYear = true) => {
 
 export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
   const { user } = useAuth();
+  const [marginRequests, setMarginRequests] = useState<any[]>([]);
+  const [isSendingMarginRequest, setIsSendingMarginRequest] = useState(false);
   const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const clientDropdownRef = useRef<HTMLDivElement>(null);
@@ -58,14 +60,194 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
     manualPackingCost: '',
     manualProfitMargin: '',
     selectedBOMOptions: {} as Record<string, any>,
-    hasHoles: false,
+  });
+
+  // Smart Hole Data state — auto-populated when active formulas use custom variables mapping to user inputs
+  const [holePopupOpen, setHolePopupOpen] = useState(false);
+  // Track which BOM item triggered the hole popup (for context label)
+  const [holePopupItem, setHolePopupItem] = useState<{ name: string; optionName?: string } | null>(null);
+  const [holeData, setHoleData] = useState({
+    holeLength: '',
+    holeWidth: '',
     holeSize: '',
     holeDistHorizontal: '',
     holeDistVertical: '',
     pricePerHole: '',
   });
 
+  const isVariableUsedInFormula = (formula: string, symbol: string) => {
+    if (!formula) return false;
+    const escaped = symbol.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const regex = new RegExp('\\b' + escaped + '\\b', 'i');
+    return regex.test(formula);
+  };
+
+  const getItemActiveOptionNames = (item: any, selectedBOMOptions: any) => {
+    if (!selectedBOMOptions) return [];
+    const rawSel = selectedBOMOptions[item.id];
+    if (rawSel === undefined || rawSel === null) return [];
+    const hasOptions = Array.isArray(item.options) && item.options.length > 0;
+    if (!hasOptions) return [];
+
+    const selectedOptIndices: number[] = Array.isArray(rawSel)
+      ? rawSel
+      : [rawSel];
+
+    return selectedOptIndices
+      .map(optIdx => item.options[optIdx]?.name)
+      .filter(Boolean);
+  };
+
+  const getItemActiveVariables = (item: any) => {
+    // Only use variables scoped to this specific BOM item — NOT global config.variables.
+    // This ensures EYELET variables don't leak into BUTTONS or other items.
+    const itemVars: any[] = Array.isArray(item.variables) ? item.variables : [];
+    if (itemVars.length === 0) return [];
+
+    // Filter variables: only allow variables that have no option restriction, or match the active selected option name
+    const activeOptionNames = getItemActiveOptionNames(item, formData.selectedBOMOptions);
+    const filteredItemVars = itemVars.filter((v: any) => {
+      if (!v.forOptionName) return true;
+      return activeOptionNames.includes(v.forOptionName);
+    });
+
+    if (filteredItemVars.length === 0) return [];
+
+    // PARAMETER FIELDS (holeDistHorizontal, holeDistVertical, holeSize, pricePerHole) are always
+    // included if configured for this item — regardless of whether the formula currently references them.
+    // This ensures EYELET popup opens as long as the admin has configured those variables.
+    const parameterMappedFields = new Set(['holeDistHorizontal', 'holeDistVertical', 'holeSize', 'pricePerHole', 'holesH', 'holesV', 'totalHoles']);
+
+    // Build the full active formula string for this item (including selected sub-options)
+    let activeFormula = item.formula || '';
+    const hasOptions = Array.isArray(item.options) && item.options.length > 0;
+    if (hasOptions) {
+      const rawSel = formData.selectedBOMOptions[item.id];
+      const selectedOptIndices: number[] = Array.isArray(rawSel)
+        ? rawSel
+        : rawSel !== undefined ? [rawSel] : [];
+      selectedOptIndices.forEach((optIdx) => {
+        const opt = item.options[optIdx];
+        if (opt && opt.formula) {
+          activeFormula += ' ' + opt.formula;
+        }
+      });
+    }
+
+    return filteredItemVars.filter((v: any) => {
+      // Parameter-mapped variables are always active if configured
+      if (parameterMappedFields.has(v.mappedField)) return true;
+      // Other (formula-symbol) variables: only if used in formula
+      return isVariableUsedInFormula(activeFormula, v.symbol);
+    });
+  };
+
+  const getRequiredFields = () => {
+    if (!formData.beltType || !formData.beltStyle || !config) return [];
+    const cat = (config?.beltTypes || []).find((t: any) => t.name === formData.beltType);
+    const style = (cat?.styles || []).find((s: any) => s.name === formData.beltStyle);
+    if (!style || !style.bom) return [];
+
+    const requiredFields = new Set<string>();
+
+    style.bom.forEach((item: any) => {
+      const isChecked = formData.selectedBOMOptions?._included?.[item.id] !== false;
+      if (!isChecked) return;
+
+      const activeVars = getItemActiveVariables(item);
+      activeVars.forEach((v: any) => {
+        if (v.mappedField === 'holeDistHorizontal' || v.mappedField === 'holesH' || v.mappedField === 'totalHoles') {
+          requiredFields.add('holeDistHorizontal');
+        }
+        if (v.mappedField === 'holeDistVertical' || v.mappedField === 'holesV' || v.mappedField === 'totalHoles') {
+          requiredFields.add('holeDistVertical');
+        }
+        if (v.mappedField === 'holeSize') {
+          requiredFields.add('holeSize');
+        }
+        if (v.mappedField === 'pricePerHole') {
+          requiredFields.add('pricePerHole');
+        }
+      });
+    });
+
+    return Array.from(requiredFields);
+  };
+
+  // Only checks the specific item being toggled — NOT all checked items
+  const triggerPopupIfRequiredFieldsEmpty = (item: any, updatedBOMOptions: any) => {
+    // Only use variables scoped to this specific BOM item — NOT global config.variables
+    const itemVars: any[] = Array.isArray(item.variables) ? item.variables : [];
+    const activeOptionNames = getItemActiveOptionNames(item, updatedBOMOptions);
+    const vars = itemVars.filter((v: any) => {
+      if (!v.forOptionName) return true;
+      return activeOptionNames.includes(v.forOptionName);
+    });
+
+    // Collect required fields from PARAMETER-MAPPED variables.
+    // These are always required when configured — no formula check needed.
+    // This means EYELET's HHD/VHD/HS will trigger the popup even if formula is not yet set.
+    const requiredFields = new Set<string>();
+    vars.forEach((v: any) => {
+      if (v.mappedField === 'holeDistHorizontal' || v.mappedField === 'holesH' || v.mappedField === 'totalHoles') requiredFields.add('holeDistHorizontal');
+      if (v.mappedField === 'holeDistVertical' || v.mappedField === 'holesV' || v.mappedField === 'totalHoles') requiredFields.add('holeDistVertical');
+      if (v.mappedField === 'holeSize') requiredFields.add('holeSize');
+      if (v.mappedField === 'pricePerHole') requiredFields.add('pricePerHole');
+    });
+
+    if (requiredFields.size === 0) return; // This item has no parameter-mapped variables
+
+    const hasEmptyNeeded = Array.from(requiredFields).some(f => {
+      if (f === 'holeSize') return !holeData.holeSize;
+      if (f === 'holeDistHorizontal') return !holeData.holeDistHorizontal;
+      if (f === 'holeDistVertical') return !holeData.holeDistVertical;
+      if (f === 'pricePerHole') return !holeData.pricePerHole;
+      return false;
+    });
+
+    if (hasEmptyNeeded) {
+      const lMm = Math.round(toMeters(parseFloat(formData.length) || 0, formData.lengthUnit) * 1000);
+      const wMm = Math.round(toMeters(parseFloat(formData.width) || 0, formData.widthUnit) * 1000);
+      setHoleData(prev => ({
+        ...prev,
+        holeLength: prev.holeLength || String(lMm || ''),
+        holeWidth: prev.holeWidth || String(wMm || '')
+      }));
+      // Store context: which item opened the popup
+      const activeOptName = activeOptionNames.length > 0 ? activeOptionNames[0] : undefined;
+      setHolePopupItem({ name: item.name, optionName: activeOptName });
+      setHolePopupOpen(true);
+    }
+  };
+
+  const selectedVariableItems = (() => {
+    if (!formData.beltType || !formData.beltStyle || !config) return [];
+    const cat = (config?.beltTypes || []).find((t: any) => t.name === formData.beltType);
+    const style = (cat?.styles || []).find((s: any) => s.name === formData.beltStyle);
+    if (!style || !style.bom) return [];
+
+    const list: { name: string; variables: any[] }[] = [];
+
+    style.bom.forEach((item: any) => {
+      const isChecked = formData.selectedBOMOptions?._included?.[item.id] !== false;
+      if (!isChecked) return;
+
+      const activeVars = getItemActiveVariables(item);
+      if (activeVars.length > 0) {
+        list.push({
+          name: item.name,
+          variables: activeVars
+        });
+      }
+    });
+
+    return list;
+  })();
+
+  const needsHoleData = selectedVariableItems.length > 0;
+
   const [result, setResult] = useState<any>(null);
+  const [pendingCalculate, setPendingCalculate] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [expandedRates, setExpandedRates] = useState<Record<string, boolean>>({});
@@ -79,6 +261,119 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
   const [dimensionInsight, setDimensionInsight] = useState<string | null>(null);
   const [insightOrders, setInsightOrders] = useState<Quotation[]>([]);
   const selectedClient = clients?.find?.(c => c.id === formData.clientId) || null;
+
+  const clientProfitRanges = (() => {
+    if (!selectedClient || !formData.beltType || !formData.beltStyle) return [];
+    const typeData = selectedClient.profitMargins?.[formData.beltType];
+    if (!typeData) return [];
+    if (!Array.isArray(typeData) && typeof typeData === 'object') {
+      return Array.isArray(typeData[formData.beltStyle]) ? typeData[formData.beltStyle] : [];
+    }
+    if (Array.isArray(typeData)) return typeData;
+    return [];
+  })();
+
+  // Margin is considered "set" only when there is at least one range with a margin > 0.
+  // A profit margin of 0% means admin has NOT properly configured it yet.
+  const isMarginSet = clientProfitRanges &&
+    clientProfitRanges.length > 0 &&
+    clientProfitRanges.some((r: any) => (r.margin || 0) > 0);
+
+  // Combine quotations with margin configuration requests to show them in Client History
+  const combinedHistory = (() => {
+    const currentClientRequests = (marginRequests || [])
+      .filter((mr: any) => mr.clientId === formData.clientId)
+      .map((mr: any) => ({
+        id: mr.id,
+        createdAt: mr.createdAt,
+        beltType: mr.beltType,
+        beltStyle: mr.beltStyle,
+        dimensions: { 
+          length: mr.length || 0, 
+          width: mr.width || 0,
+          lengthUnit: mr.lengthUnit || 'mm',
+          widthUnit: mr.widthUnit || 'mm'
+        },
+        totalCost: 0,
+        status: `margin_${mr.status}`,
+        isMarginRequest: true,
+      }));
+
+    const quotes = (clientHistory || []).map((q: any) => ({
+      ...q,
+      isMarginRequest: false,
+    }));
+
+    return [...currentClientRequests, ...quotes].sort((a: any, b: any) => {
+      const dateA = new Date(a.createdAt).getTime();
+      const dateB = new Date(b.createdAt).getTime();
+      return dateB - dateA;
+    });
+  })();
+
+  const fetchMarginRequests = async () => {
+    try {
+      const res = await fetch('/api/margin-requests');
+      if (res.ok) {
+        const data = await res.json();
+        setMarginRequests(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch margin requests', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchMarginRequests();
+    const interval = setInterval(fetchMarginRequests, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleSendMarginRequest = async () => {
+    if (!formData.clientId || !formData.beltType || !formData.beltStyle) return;
+
+    // Validate that length and width are entered and valid before allowing requests
+    if (!formData.length || !formData.width) {
+      toast.error('Please enter the belt Length and Width first before sending the margin request!');
+      return;
+    }
+    const lenVal = parseFloat(formData.length);
+    const widVal = parseFloat(formData.width);
+    if (isNaN(lenVal) || lenVal <= 0 || isNaN(widVal) || widVal <= 0) {
+      toast.error('Please enter a valid Length and Width greater than 0 first!');
+      return;
+    }
+
+    setIsSendingMarginRequest(true);
+    try {
+      const res = await fetch('/api/margin-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: formData.clientId,
+          clientName: selectedClient?.name || '',
+          beltType: formData.beltType,
+          beltStyle: formData.beltStyle,
+          length: lenVal,
+          width: widVal,
+          lengthUnit: formData.lengthUnit,
+          widthUnit: formData.widthUnit
+        })
+      });
+      if (res.ok) {
+        toast.success('Margin setting request sent to Admin!');
+        fetchMarginRequests();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData.error || 'Failed to send request');
+      }
+    } catch (err) {
+      console.error('Failed to send margin request', err);
+      toast.error('Failed to send request');
+    } finally {
+      setIsSendingMarginRequest(false);
+    }
+  };
 
   useEffect(() => {
     if (!formData.length || !formData.width || !formData.clientId) {
@@ -222,6 +517,27 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
       }
     }
 
+    const missingFields = getRequiredFields().filter((field) => {
+      if (field === 'holeSize') return !holeData.holeSize;
+      if (field === 'holeDistHorizontal') return !holeData.holeDistHorizontal;
+      if (field === 'holeDistVertical') return !holeData.holeDistVertical;
+      if (field === 'pricePerHole') return !holeData.pricePerHole;
+      return false;
+    });
+
+    if (missingFields.length > 0) {
+      const fieldLabels = missingFields.map(f => {
+        if (f === 'holeSize') return 'Hole Size (mm)';
+        if (f === 'holeDistHorizontal') return 'Horizontal Spacing (mm)';
+        if (f === 'holeDistVertical') return 'Vertical Spacing (mm)';
+        if (f === 'pricePerHole') return 'Price per Hole (₹)';
+        return f;
+      });
+      toast.error(`Please fill in required variables: ${fieldLabels.join(', ')} before calculating costing.`);
+      setHolePopupOpen(true);
+      return;
+    }
+
     setIsConfirmOpen(true);
   };
 
@@ -231,13 +547,22 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
     try {
       const selectedCategory = (Array.isArray(config?.beltTypes) ? config.beltTypes : [])?.find?.(t => t.name === formData.beltType) || null;
       const selectedStyle = (Array.isArray(selectedCategory?.styles) ? selectedCategory.styles : [])?.find?.(s => s.name === formData.beltStyle) || null;
-      const clientProfitRanges = selectedClient?.profitMargins?.[formData.beltType] || [];
+      const clientProfitRanges: import('../types').ProfitRange[] = (() => {
+        const typeData = selectedClient?.profitMargins?.[formData.beltType];
+        if (!typeData) return [];
+        // New nested format: { styleName: ProfitRange[] }
+        if (!Array.isArray(typeData) && typeof typeData === 'object') {
+          return Array.isArray(typeData[formData.beltStyle]) ? typeData[formData.beltStyle] : [];
+        }
+        // Legacy flat format: ProfitRange[]
+        return Array.isArray(typeData) ? typeData : [];
+      })();
       
       const included = formData.selectedBOMOptions?._included;
       const customRates = formData.selectedBOMOptions?._customRates || {};
-      const customBOM = (selectedStyle?.bom || [])
-        .filter(item => !included || included[item.id] !== false)
-        .flatMap(item => {
+      const customBOM = ((selectedStyle?.bom || [])
+        .filter(item => !included || included[item.id] !== false) as any[])
+        .flatMap((item: any) => {
           // Support both old single-index and new multi-index formats
           const rawSel = formData.selectedBOMOptions[item.id];
           const selectedOptIndices: number[] = Array.isArray(rawSel)
@@ -246,10 +571,30 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
 
           if (selectedOptIndices.length > 0 && Array.isArray(item.options) && item.options.length > 0) {
             // Each selected option becomes a separate BOM line item
-            return selectedOptIndices
-              .map((optIdx: number) => {
-                const opt = item.options[optIdx];
-                if (!opt) return null;
+            return (selectedOptIndices as any[])
+              .flatMap((optIdx: number) => {
+                const opt = item.options![optIdx];
+                if (!opt) return [];
+
+                // ── FORMATION EXPANSION ──
+                // If this sub-category is a Formation, expand its internal items
+                if (opt.isFormation && Array.isArray(opt.formationItems) && opt.formationItems.length > 0) {
+                  return opt.formationItems.map((fi: any, fiIdx: number) => ({
+                    ...item,
+                    rate: fi.rate || 0,
+                    unit: fi.unit || opt.unit || item.unit,
+                    // Internal name: stored as "FormationName > ItemName" for admin tracking
+                    name: fi.name ? `${opt.name} › ${fi.name}` : opt.name,
+                    formula: fi.formula || opt.formula || item.formula,
+                    id: `${item.id}_opt${optIdx}_fi${fiIdx}`,
+                    _originalParentId: item.id,
+                    // Mark as formation child so we can group in display
+                    _formationName: opt.name,
+                    _isFormationItem: true,
+                  }));
+                }
+                // ── END FORMATION ──
+
                 let rate = opt.rate;
                 let unit = opt.unit || item.unit;
                 let name = opt.name ? opt.name.trim() : item.name;
@@ -258,7 +603,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                 if (customRates[item.id] !== undefined && selectedOptIndices[0] === optIdx) {
                   rate = customRates[item.id];
                 }
-                return { ...item, rate, unit, name, formula, id: `${item.id}_opt${optIdx}` };
+                return [{ ...item, rate, unit, name, formula, id: `${item.id}_opt${optIdx}`, _originalParentId: item.id }];
               })
               .filter(Boolean);
           }
@@ -284,6 +629,10 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
           return [{ ...item, rate, unit, name, formula }];
         });
 
+      const requiredFields = getRequiredFields();
+      const hasHoles = requiredFields.length > 0;
+      const finalPricePerHole = holeData.pricePerHole || '0';
+
       const result = calculateCosting({
         length: parseFloat(formData.length),
         lengthUnit: formData.lengthUnit,
@@ -292,12 +641,15 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
         beltType: formData.beltType,
         manualPackingCost: formData.manualPackingCost || undefined,
         manualProfitMargin: formData.manualProfitMargin || undefined,
-        hasHoles: formData.hasHoles,
-        holeSize: formData.holeSize,
-        holeDistHorizontal: formData.holeDistHorizontal,
-        holeDistVertical: formData.holeDistVertical,
-        pricePerHole: formData.pricePerHole,
-      }, config, clientProfitRanges, customBOM, {});
+        hasHoles: hasHoles && !!holeData.holeSize,
+        holeLength: holeData.holeLength,
+        holeWidth: holeData.holeWidth,
+        holeSize: holeData.holeSize,
+        holeDistHorizontal: holeData.holeDistHorizontal,
+        holeDistVertical: holeData.holeDistVertical,
+        pricePerHole: finalPricePerHole,
+        selectedBOMOptions: formData.selectedBOMOptions,
+      }, config, clientProfitRanges, customBOM as any, {});
 
 
       if (user?.role !== 'admin') {
@@ -337,6 +689,9 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
       return;
     }
 
+    const hasHoles = getRequiredFields().length > 0 && !!holeData.holeSize;
+    const finalPricePerHole = holeData.pricePerHole ? parseFloat(holeData.pricePerHole) : 0;
+
     const newItem: QuotationItem = {
       id: Date.now().toString() + Math.random().toString(36).substring(2, 7),
       beltType: formData.beltType,
@@ -346,12 +701,14 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
         lengthUnit: formData.lengthUnit,
         width: parseFloat(formData.width),
         widthUnit: formData.widthUnit,
-        hasHoles: formData.hasHoles,
-        holeSize: formData.hasHoles ? (parseFloat(formData.holeSize) || 0) : undefined,
-        holeDistHorizontal: formData.hasHoles ? (parseFloat(formData.holeDistHorizontal) || 0) : undefined,
-        holeDistVertical: formData.hasHoles ? (parseFloat(formData.holeDistVertical) || 0) : undefined,
-        pricePerHole: formData.hasHoles ? (parseFloat(formData.pricePerHole) || 0) : undefined,
-        totalHoles: formData.hasHoles ? (result.summary.totalHoles || 0) : undefined,
+        hasHoles,
+        holeSize: hasHoles ? (parseFloat(holeData.holeSize) || 0) : undefined,
+        holeLength: hasHoles ? (parseFloat(holeData.holeLength) || 0) : undefined,
+        holeWidth: hasHoles ? (parseFloat(holeData.holeWidth) || 0) : undefined,
+        holeDistHorizontal: hasHoles ? (parseFloat(holeData.holeDistHorizontal) || 0) : undefined,
+        holeDistVertical: hasHoles ? (parseFloat(holeData.holeDistVertical) || 0) : undefined,
+        pricePerHole: hasHoles ? finalPricePerHole : undefined,
+        totalHoles: hasHoles ? (result.summary.totalHoles || 0) : undefined,
       },
       totalCost: result.summary.finalTotal,
       selectedBOMOptions: JSON.parse(JSON.stringify(formData.selectedBOMOptions)),
@@ -363,6 +720,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
     
     // Clear result and inputs
     setResult(null);
+    setHoleData({ holeLength: '', holeWidth: '', holeSize: '', holeDistHorizontal: '', holeDistVertical: '', pricePerHole: '' });
     setFormData({
       ...formData,
       length: '',
@@ -370,11 +728,6 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
       manualPackingCost: '',
       manualProfitMargin: '',
       beltStyle: '',
-      hasHoles: false,
-      holeSize: '',
-      holeDistHorizontal: '',
-      holeDistVertical: '',
-      pricePerHole: '',
     });
   };
 
@@ -447,7 +800,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="p-1.5 bg-zinc-900 rounded-lg text-white">
+          <div className="p-1.5 bg-blue-50 text-[#1e40af] rounded-lg">
             <CalcIcon className="h-4 w-4" />
           </div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900">Costing Calculator</h1>
@@ -458,7 +811,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
         <Card className="lg:col-span-1 border-zinc-300 shadow-xl bg-white/50 backdrop-blur-sm self-start">
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2 mb-0.5">
-              <div className="p-1.5 bg-zinc-900 rounded-lg">
+              <div className="p-1.5 bg-blue-50 text-[#1e40af] rounded-lg">
                 <CalcIcon className="h-3.5 w-3.5 text-white" />
               </div>
               <CardTitle className="text-lg">Input Parameters</CardTitle>
@@ -645,83 +998,20 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                     </div>
                   </div>
 
-                  {/* Hole Checkbox Layout Specification */}
-                  <div className="space-y-3 pt-2.5 border-t border-zinc-100">
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="holeCheckbox"
-                        checked={formData.hasHoles || false}
-                        onChange={(e) => setFormData({ ...formData, hasHoles: e.target.checked })}
-                        className="h-4 w-4 rounded border-zinc-400 text-zinc-900 focus:ring-zinc-900 transition-colors"
-                      />
-                      <Label htmlFor="holeCheckbox" className="text-xs font-semibold cursor-pointer">
-                        Hole Checkbox
-                      </Label>
-                    </div>
-
-                    {formData.hasHoles && (
-                      <div className="grid gap-2.5 pl-4 border-l border-zinc-200 mt-2 animate-in fade-in slide-in-from-top-1 duration-150">
-                        <div className="space-y-1">
-                          <Label className="text-[10px] font-bold text-zinc-500 uppercase">Hole Size (mm)</Label>
-                          <Input
-                            type="number"
-                            placeholder="e.g. 5"
-                            value={formData.holeSize || ''}
-                            onChange={(e) => setFormData({ ...formData, holeSize: e.target.value })}
-                            className="bg-white border-zinc-400 h-9 text-xs"
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="space-y-1">
-                            <Label className="text-[10px] font-bold text-zinc-500 uppercase">Horizontal Spacing (mm)</Label>
-                            <Input
-                              type="number"
-                              placeholder="e.g. 50"
-                              value={formData.holeDistHorizontal || ''}
-                              onChange={(e) => setFormData({ ...formData, holeDistHorizontal: e.target.value })}
-                              className="bg-white border-zinc-400 h-9 text-xs"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-[10px] font-bold text-zinc-500 uppercase">Vertical Spacing (mm)</Label>
-                            <Input
-                              type="number"
-                              placeholder="e.g. 30"
-                              value={formData.holeDistVertical || ''}
-                              onChange={(e) => setFormData({ ...formData, holeDistVertical: e.target.value })}
-                              className="bg-white border-zinc-400 h-9 text-xs"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="space-y-1">
-                          <Label className="text-[10px] font-bold text-zinc-500 uppercase">Price per Hole (₹)</Label>
-                          <Input
-                            type="number"
-                            placeholder="e.g. 2.5"
-                            value={formData.pricePerHole || ''}
-                            onChange={(e) => setFormData({ ...formData, pricePerHole: e.target.value })}
-                            className="bg-white border-zinc-400 h-9 text-xs"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
                 </div>
                 {dimensionInsight && insightOrders.length > 0 && (
                   <Dialog>
-                    <DialogTrigger asChild>
-                      <button type="button" className="w-full text-left mt-3 p-2 bg-indigo-50 hover:bg-indigo-100 transition-colors border border-indigo-100 rounded-lg flex items-start gap-2 animate-in fade-in slide-in-from-top-2 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
-                        <AlertCircle className="h-4 w-4 text-indigo-600 mt-0.5 shrink-0" />
-                        <div>
-                          <p className="text-xs font-semibold text-indigo-900">Insight</p>
-                          <p className="text-[10px] text-indigo-700">{dimensionInsight}</p>
-                        </div>
-                      </button>
-                    </DialogTrigger>
+                    <DialogTrigger
+                      render={
+                        <button type="button" className="w-full text-left mt-3 p-2 bg-indigo-50 hover:bg-indigo-100 transition-colors border border-indigo-100 rounded-lg flex items-start gap-2 animate-in fade-in slide-in-from-top-2 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                          <AlertCircle className="h-4 w-4 text-indigo-600 mt-0.5 shrink-0" />
+                          <div>
+                            <p className="text-xs font-semibold text-indigo-900">Insight</p>
+                            <p className="text-[10px] text-indigo-700">{dimensionInsight}</p>
+                          </div>
+                        </button>
+                      }
+                    />
                     <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col p-6 sm:max-w-2xl">
                       <DialogHeader>
                         <DialogTitle>Previous Orders Insight</DialogTitle>
@@ -820,18 +1110,69 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                                     }
                                   });
                                   included[item.id] = e.target.checked;
+                                  const updatedBOMOptions = {
+                                    ...formData.selectedBOMOptions,
+                                    _included: included
+                                  };
                                   setFormData({
                                     ...formData,
-                                    selectedBOMOptions: {
-                                      ...formData.selectedBOMOptions,
-                                      _included: included
-                                    }
+                                    selectedBOMOptions: updatedBOMOptions
                                   });
+                                  if (e.target.checked) {
+                                    triggerPopupIfRequiredFieldsEmpty(item, updatedBOMOptions);
+                                  }
                                 }}
                                 className="h-4 w-4 rounded border-zinc-400 text-zinc-950 focus:ring-zinc-950 transition-colors cursor-pointer"
                               />
-                              <Label htmlFor={`bom-chk-${item.id}`} className="text-xs font-bold cursor-pointer text-zinc-800 flex-1">
+                              <Label htmlFor={`bom-chk-${item.id}`} className="text-xs font-bold cursor-pointer text-zinc-800 flex-1 flex items-center gap-2">
                                 {item.name}
+                                {getItemActiveVariables(item).length > 0 && isChecked && (() => {
+                                  const itemVars = getItemActiveVariables(item);
+                                  const itemRequiredFields = itemVars.map(v => {
+                                    if (v.mappedField === 'holeDistHorizontal' || v.mappedField === 'holesH' || v.mappedField === 'totalHoles') return 'holeDistHorizontal';
+                                    if (v.mappedField === 'holeDistVertical' || v.mappedField === 'holesV' || v.mappedField === 'totalHoles') return 'holeDistVertical';
+                                    if (v.mappedField === 'holeSize') return 'holeSize';
+                                    if (v.mappedField === 'pricePerHole') return 'pricePerHole';
+                                    return '';
+                                  }).filter(Boolean);
+
+                                  const isComplete = itemRequiredFields.every(f => {
+                                    if (f === 'holeSize') return !!holeData.holeSize;
+                                    if (f === 'holeDistHorizontal') return !!holeData.holeDistHorizontal;
+                                    if (f === 'holeDistVertical') return !!holeData.holeDistVertical;
+                                    if (f === 'pricePerHole') return !!holeData.pricePerHole;
+                                    return true;
+                                  });
+
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        const lMm = Math.round(toMeters(parseFloat(formData.length) || 0, formData.lengthUnit) * 1000);
+                                        const wMm = Math.round(toMeters(parseFloat(formData.width) || 0, formData.widthUnit) * 1000);
+                                        setHoleData(prev => ({
+                                          ...prev,
+                                          holeLength: prev.holeLength || String(lMm || ''),
+                                          holeWidth: prev.holeWidth || String(wMm || '')
+                                        }));
+                                        setHolePopupOpen(true);
+                                      }}
+                                      className={cn(
+                                        "inline-flex items-center gap-1 text-[9px] font-black px-1.5 py-0.5 rounded-full border transition-colors cursor-pointer",
+                                        isComplete
+                                          ? "bg-green-50 text-green-700 border-green-200 hover:bg-green-100"
+                                          : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100 animate-pulse"
+                                      )}
+                                    >
+                                      <svg xmlns="http://www.w3.org/2000/svg" className="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>
+                                      {isComplete 
+                                        ? `Variables filled ✓` 
+                                        : `Fill variables (${itemVars.map(v => v.symbol).join(', ')})`
+                                      }
+                                    </button>
+                                  );
+                                })()}
                               </Label>
                             </div>
                             {/* Remark field - always visible when checked */}
@@ -874,6 +1215,13 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                                        const isOptSelected = selectedOptIndices.includes(i);
                                        const optRemarkKey = `${item.id}_${i}`;
                                        const optRemark = formData.selectedBOMOptions?._optRemarks?.[optRemarkKey] || '';
+                                       const isFormationOpt = !!opt.isFormation;
+                                       // For formations: compute total rate from formation items
+                                       const formationTotal = isFormationOpt && Array.isArray(opt.formationItems)
+                                         ? opt.formationItems.reduce((s: number, fi: any) => s + (fi.rate || 0), 0)
+                                         : null;
+                                       const displayRate = isFormationOpt ? formationTotal : opt.rate;
+
                                        return (
                                          <div key={i} className="space-y-1">
                                            <div className="flex items-center space-x-2">
@@ -882,22 +1230,26 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                                                id={`bom-opt-${item.id}-${i}`}
                                                checked={isOptSelected}
                                                onChange={(e) => {
-                                                 const currentSelected: number[] = Array.isArray(formData.selectedBOMOptions[item.id])
-                                                   ? [...formData.selectedBOMOptions[item.id]]
-                                                   : formData.selectedBOMOptions[item.id] !== undefined
-                                                     ? [formData.selectedBOMOptions[item.id]]
-                                                     : [];
-                                                 const newSelected = e.target.checked
-                                                   ? [...currentSelected, i]
-                                                   : currentSelected.filter((x: number) => x !== i);
-                                                 setFormData({
-                                                   ...formData,
-                                                   selectedBOMOptions: {
-                                                     ...formData.selectedBOMOptions,
-                                                     [item.id]: newSelected.length > 0 ? newSelected : undefined
-                                                   }
-                                                 });
-                                               }}
+                                                  const currentSelected: number[] = Array.isArray(formData.selectedBOMOptions[item.id])
+                                                    ? [...formData.selectedBOMOptions[item.id]]
+                                                    : formData.selectedBOMOptions[item.id] !== undefined
+                                                      ? [formData.selectedBOMOptions[item.id]]
+                                                      : [];
+                                                  const newSelected = e.target.checked
+                                                    ? [...currentSelected, i]
+                                                    : currentSelected.filter((x: number) => x !== i);
+                                                  const updatedBOMOptions = {
+                                                    ...formData.selectedBOMOptions,
+                                                    [item.id]: newSelected.length > 0 ? newSelected : undefined
+                                                  };
+                                                  setFormData({
+                                                    ...formData,
+                                                    selectedBOMOptions: updatedBOMOptions
+                                                  });
+                                                  if (e.target.checked) {
+                                                    triggerPopupIfRequiredFieldsEmpty(item, updatedBOMOptions);
+                                                  }
+                                                }}
                                                className="h-3.5 w-3.5 rounded border-zinc-400 text-zinc-950 focus:ring-zinc-950 transition-colors cursor-pointer"
                                              />
                                              <Label 
@@ -907,15 +1259,29 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                                                   isOptSelected ? "font-bold text-zinc-900" : "font-medium text-zinc-650 hover:text-zinc-900"
                                                 )}
                                               >
-                                                <span className="truncate">{opt.name || `Option ${i + 1}`}</span>
-                                                <span className={cn(
-                                                  "text-[9px] font-black px-1.5 py-0.5 rounded-md border shrink-0 tabular-nums transition-colors",
-                                                  isOptSelected
-                                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                                    : "bg-zinc-100 text-zinc-400 border-zinc-200"
-                                                )}>
-                                                  ₹{opt.rate}/{opt.unit || item.unit}
+                                                <span className="flex items-center gap-1.5 truncate">
+                                                  <span className="truncate">{opt.name || `Option ${i + 1}`}</span>
+                                                  {isFormationOpt && (
+                                                    <span className="text-[8px] font-black bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+                                                      Bundle
+                                                    </span>
+                                                  )}
                                                 </span>
+                                                {user?.role === 'admin' && (
+                                                  <span className={cn(
+                                                    "text-[9px] font-black px-1.5 py-0.5 rounded-md border shrink-0 tabular-nums transition-colors",
+                                                    isOptSelected
+                                                      ? isFormationOpt
+                                                        ? "bg-violet-50 text-violet-700 border-violet-200"
+                                                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                                      : "bg-zinc-100 text-zinc-400 border-zinc-200"
+                                                  )}>
+                                                    {isFormationOpt && displayRate !== null
+                                                      ? `₹${(displayRate as number).toFixed(0)}/${opt.unit || item.unit}`
+                                                      : `₹${opt.rate}/${opt.unit || item.unit}`
+                                                    }
+                                                  </span>
+                                                )}
                                               </Label>
                                            </div>
                                            {/* Remark field below selected sub-category */}
@@ -942,6 +1308,20 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                                                   }}
                                                   className="w-full text-[10px] px-2 py-1 border border-dashed border-indigo-200 rounded-lg bg-indigo-50/30 focus:outline-none focus:border-indigo-400 focus:bg-indigo-50/60 placeholder:text-zinc-400 text-zinc-600 transition-all"
                                                 />
+                                              </div>
+                                            )}
+                                            {/* Admin-only: show formation items breakdown as tooltip-style hint */}
+                                            {isFormationOpt && isOptSelected && user?.role === 'admin' && Array.isArray(opt.formationItems) && opt.formationItems.length > 0 && (
+                                              <div className="pl-5.5 mt-1">
+                                                <div className="bg-violet-50 border border-violet-100 rounded-lg px-2 py-1.5 space-y-0.5">
+                                                  <p className="text-[8px] font-black uppercase text-violet-400 tracking-widest mb-1">Formation Breakdown (Admin Only)</p>
+                                                  {opt.formationItems.map((fi: any, fiIdx: number) => (
+                                                    <div key={fiIdx} className="flex items-center justify-between">
+                                                      <span className="text-[9px] text-violet-700 font-medium">{fi.name || `Item ${fiIdx + 1}`}</span>
+                                                      <span className="text-[9px] font-bold text-violet-600 font-mono">₹{fi.rate}/{fi.unit} · {fi.formula}</span>
+                                                    </div>
+                                                  ))}
+                                                </div>
                                               </div>
                                             )}
                                          </div>
@@ -1043,23 +1423,69 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
               )}
             </div>
 
-            <Button 
-              className="w-full bg-zinc-900 hover:bg-zinc-800 text-white mt-1 h-10 text-sm font-semibold rounded-lg shadow-md transition-all active:scale-[0.98]" 
-              onClick={triggerCalculate}
-              disabled={isLoading}
-            >
-              {isLoading ? (
-                <div className="flex items-center gap-2">
-                  <div className="h-3 w-3 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-                  Calculating...
+            {formData.clientId && formData.beltType && formData.beltStyle && !isMarginSet ? (
+              user?.role !== 'admin' ? (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-3 mt-2 animate-in fade-in slide-in-from-top-2">
+                  <div className="flex items-start gap-2.5">
+                    <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="text-xs font-bold text-amber-900">Margin Not Set</h4>
+                      <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
+                        Profit margins for <strong>{formData.beltType} ({formData.beltStyle})</strong> have not been configured for this client yet.
+                      </p>
+                    </div>
+                  </div>
+                  {marginRequests.some(r => 
+                    r.clientId === formData.clientId && 
+                    r.beltType === formData.beltType && 
+                    r.beltStyle === formData.beltStyle && 
+                    r.status === 'pending'
+                  ) ? (
+                    <div className="text-center py-2 px-3 bg-amber-100/50 rounded-lg border border-amber-200 text-xs font-bold text-amber-800">
+                      ⌛ Request Sent (Pending Admin Configuration)
+                    </div>
+                  ) : (
+                    <Button
+                      onClick={handleSendMarginRequest}
+                      disabled={isSendingMarginRequest}
+                      className="w-full bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs h-9 rounded-lg"
+                    >
+                      {isSendingMarginRequest ? 'Sending...' : 'Send Request to Admin to Set Margin'}
+                    </Button>
+                  )}
                 </div>
               ) : (
-                <div className="flex items-center gap-2">
-                  <CalcIcon className="h-3.5 w-3.5" />
-                  Calculate Costing
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-3 mt-2 animate-in fade-in slide-in-from-top-2">
+                  <div className="flex items-start gap-2.5">
+                    <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="text-xs font-bold text-amber-900">Margin Not Configured</h4>
+                      <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
+                        Profit margins for <strong>{formData.beltType} ({formData.beltStyle})</strong> have not been configured for this client yet. Please set the margin for this client first.
+                      </p>
+                    </div>
+                  </div>
                 </div>
-              )}
-            </Button>
+              )
+            ) : (
+              <Button 
+                className="w-full bg-[#1e40af] hover:bg-[#1d4ed8] text-white mt-1 h-10 text-sm font-semibold rounded-[6px] shadow-sm transition-all active:scale-[0.98] cursor-pointer" 
+                onClick={triggerCalculate}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <div className="flex items-center gap-2">
+                    <div className="h-3 w-3 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+                    Calculating...
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <CalcIcon className="h-3.5 w-3.5" />
+                    Calculate Costing
+                  </div>
+                )}
+              </Button>
+            )}
           </CardContent>
         </Card>
 
@@ -1089,42 +1515,12 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
               </div>
             ) : (
               <div className="space-y-6">
-                {/* Hole Layout Info Card */}
-                {result.summary && result.summary.hasHoles && (
-                  <div className="p-3 bg-indigo-50 border border-indigo-150 rounded-xl space-y-1.5 animate-in fade-in duration-200">
-                    <h3 className="text-[10px] font-black uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
-                      <AlertCircle className="h-3.5 w-3.5 text-indigo-700" />
-                      Holes Layout Specifications
-                    </h3>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-semibold text-slate-700 mt-1">
-                      <div>
-                        <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider">Total Holes</span>
-                        <p className="text-base font-black text-indigo-900">{result.summary.totalHoles}</p>
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider">Holes Grid (L x W)</span>
-                        <p className="text-xs font-bold text-slate-900">
-                          {Math.floor(toMeters(parseFloat(formData.length), formData.lengthUnit) * 1000 / (parseFloat(formData.holeDistHorizontal) || 1))} × {Math.floor(toMeters(parseFloat(formData.width), formData.widthUnit) * 1000 / (parseFloat(formData.holeDistVertical) || 1))}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider">Hole Size</span>
-                        <p className="text-xs font-bold text-slate-900">{formData.holeSize} mm</p>
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider">Spacing (H / V)</span>
-                        <p className="text-xs font-bold text-slate-900">
-                          {formData.holeDistHorizontal}mm / {formData.holeDistVertical}mm
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
+
 
                 {user?.role === 'admin' && result.breakdown && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
-                      <div className="h-1 w-1 rounded-full bg-zinc-900" />
+                      <div className="h-1 w-1 rounded-full bg-[#1e40af]" />
                       <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-600">Material Cost Breakdown</h3>
                     </div>
                     <div className="border border-zinc-100 rounded-lg overflow-x-auto shadow-sm">
@@ -1169,7 +1565,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                 {user?.role === 'admin' && result.summary && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
-                      <div className="h-1 w-1 rounded-full bg-zinc-900" />
+                      <div className="h-1 w-1 rounded-full bg-[#1e40af]" />
                       <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-600">Price Summary</h3>
                     </div>
                     <div className="border border-zinc-100 rounded-lg overflow-x-auto shadow-sm">
@@ -1203,7 +1599,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                             <TableCell className="text-[10px] pl-6 py-1">Packing Charge</TableCell>
                             <TableCell className="text-right font-mono text-[10px] py-1">{formatCurrency(result.summary.packingCost)}</TableCell>
                           </TableRow>
-                          <TableRow className="bg-zinc-900 hover:bg-zinc-800 text-white font-bold h-11">
+                          <TableRow className="bg-[#1e40af] text-white font-bold h-11 hover:bg-[#1d4ed8]">
                             <TableCell className="text-sm py-2">Final Selling Price</TableCell>
                             <TableCell className="text-right text-lg font-mono py-2">{formatCurrency(result.summary.finalTotal)}</TableCell>
                           </TableRow>
@@ -1214,7 +1610,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                 )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-zinc-50 p-4 rounded-xl border border-zinc-100 shadow-inner">
-                  <div className="flex flex-col justify-center p-4 bg-zinc-900 rounded-lg text-white shadow-lg overflow-hidden relative col-span-2">
+                  <div className="flex flex-col justify-center p-4 bg-[#1e40af] rounded-lg text-white shadow-sm overflow-hidden relative col-span-2">
                     <p className="text-zinc-400 text-[9px] font-black uppercase tracking-[0.2em] mb-2">Price Summary</p>
                     
                     {user?.role === 'admin' ? (
@@ -1255,6 +1651,14 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                     className="flex-1 gap-1.5 h-10 border-zinc-300 hover:bg-zinc-50 text-zinc-700 text-xs font-bold transition-all" 
                     onClick={() => {
                       setResult(null);
+                      setHoleData({
+                        holeLength: '',
+                        holeWidth: '',
+                        holeSize: '',
+                        holeDistHorizontal: '',
+                        holeDistVertical: '',
+                        pricePerHole: '',
+                      });
                       setFormData({
                         ...formData,
                         length: '',
@@ -1262,18 +1666,13 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                         manualPackingCost: '',
                         manualProfitMargin: '',
                         beltStyle: '',
-                        hasHoles: false,
-                        holeSize: '',
-                        holeDistHorizontal: '',
-                        holeDistVertical: '',
-                        pricePerHole: '',
                       });
                     }}
                   >
                     Reset Form
                   </Button>
                   <Button 
-                    className="flex-2 gap-1.5 bg-zinc-900 hover:bg-zinc-800 text-white h-10 text-xs font-bold shadow-md transition-all active:scale-[0.98]"
+                    className="flex-2 gap-1.5 bg-[#1e40af] hover:bg-[#1d4ed8] text-white h-10 text-xs font-bold shadow-sm transition-all active:scale-[0.98] rounded-[6px] cursor-pointer"
                     onClick={handleAddItemToQuotation}
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -1290,7 +1689,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
         <Card className="border-zinc-300 shadow-xl bg-white/80 backdrop-blur-sm mt-4 overflow-hidden animate-in fade-in slide-in-from-top-3 duration-250">
           <CardHeader className="bg-zinc-50/50 border-b border-zinc-100 py-3 flex flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2.5">
-              <div className="h-7 w-7 rounded bg-zinc-900 flex items-center justify-center">
+              <div className="h-7 w-7 rounded bg-blue-50 text-[#1e40af] flex items-center justify-center">
                 <ShoppingCart className="h-3.5 w-3.5 text-white" />
               </div>
               <div>
@@ -1564,7 +1963,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                   <div className="space-y-1">
                     <Label className="text-[10px] font-bold uppercase text-zinc-500">Sales Markup (+)</Label>
                     <div className="relative">
-                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-xs">{config.currency || '₹'}</span>
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-xs">₹</span>
                       <Input 
                         type="number" 
                         placeholder="Add extra markup amount" 
@@ -1579,7 +1978,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                       <span>Discount Requested (-)</span>
                     </Label>
                     <div className="relative">
-                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-xs">{config.currency || '₹'}</span>
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-xs">₹</span>
                       <Input 
                         type="number" 
                         placeholder="Overall discount amount" 
@@ -1626,7 +2025,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                     Save Draft
                   </Button>
                   <Button 
-                    className="flex-2 gap-1.5 bg-zinc-900 hover:bg-zinc-800 text-white h-10 text-xs font-bold shadow-md transition-all active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+                    className="flex-2 gap-1.5 bg-[#1e40af] hover:bg-[#1d4ed8] text-white h-10 text-xs font-bold shadow-sm transition-all active:scale-[0.98] rounded-[6px] cursor-pointer disabled:opacity-50 cursor-pointer"
                     onClick={() => handleSaveQuotation(discountRequested && parseFloat(discountRequested) > 0 ? 'pending_approval' : 'draft')}
                     disabled={user?.permission === 'read'}
                   >
@@ -1644,7 +2043,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
         <Card className="border-zinc-300 shadow-xl bg-white/80 backdrop-blur-sm mt-4 overflow-hidden">
           <CardHeader className="bg-zinc-50/50 border-b border-zinc-100 py-3">
             <div className="flex items-center gap-2.5">
-              <div className="h-7 w-7 rounded bg-zinc-900 flex items-center justify-center">
+              <div className="h-7 w-7 rounded bg-blue-50 text-[#1e40af] flex items-center justify-center">
                 <Save className="h-3.5 w-3.5 text-white" />
               </div>
               <div>
@@ -1654,7 +2053,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
             </div>
           </CardHeader>
           <CardContent className="p-0">
-            {clientHistory.length === 0 ? (
+            {combinedHistory.length === 0 ? (
               <div className="py-10 flex flex-col items-center justify-center opacity-40">
                 <CalcIcon className="h-7 w-7 mb-1.5" />
                 <p className="text-[10px] font-bold uppercase tracking-widest italic">New Client Data Flow</p>
@@ -1672,7 +2071,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {clientHistory.map((q) => (
+                    {combinedHistory.map((q) => (
                       <TableRow key={q.id} className="text-xs hover:bg-zinc-50/50 transition-colors group h-10">
                         <TableCell className="text-zinc-400 font-mono text-[10px] pl-4 py-2">
                           {formatOrderDate(q.createdAt, false)}
@@ -1681,20 +2080,40 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                           {q.beltType} <span className="text-zinc-400 font-normal ml-0.5">({q.beltStyle || 'Std'})</span>
                         </TableCell>
                         <TableCell className="font-mono text-[10px] text-zinc-600 py-2">
-                          {q.dimensions.length}{q.dimensions.lengthUnit || 'mm'}×{q.dimensions.width}{q.dimensions.widthUnit || 'mm'}
+                          {q.isMarginRequest ? (
+                            <span className="text-zinc-400 font-sans font-medium">—</span>
+                          ) : (
+                            `${q.dimensions.length}${q.dimensions.lengthUnit || 'mm'}×${q.dimensions.width}${q.dimensions.widthUnit || 'mm'}`
+                          )}
                         </TableCell>
                         <TableCell className="font-black text-right pr-4 py-2">
-                          {formatCurrency(Math.round(q.totalCost))}
+                          {q.isMarginRequest ? (
+                            <span className="text-[10px] text-zinc-400 font-medium font-sans">Pending Margin</span>
+                          ) : (
+                            formatCurrency(Math.round(q.totalCost))
+                          )}
                         </TableCell>
                         <TableCell className="py-2 pr-4 text-center">
-                           <div className={cn(
-                             "inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter border",
-                             q.status === 'approved' ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
-                             q.status === 'pending_approval' ? "bg-amber-50 text-amber-700 border-amber-100" :
-                             "bg-zinc-100 text-zinc-600 border-zinc-200"
-                           )}>
-                             {q.status.replace('_', ' ')}
-                           </div>
+                           {q.isMarginRequest ? (
+                             <div className={cn(
+                               "inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter border",
+                               q.status === 'margin_approved' ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                               q.status === 'margin_rejected' ? "bg-rose-50 text-rose-700 border-rose-100" :
+                               "bg-amber-50 text-amber-700 border-amber-100"
+                             )}>
+                               {q.status === 'margin_approved' ? 'Margin Configured' :
+                                q.status === 'margin_rejected' ? 'Margin Rejected' : 'Margin Request'}
+                             </div>
+                           ) : (
+                             <div className={cn(
+                               "inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter border",
+                               q.status === 'approved' ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                               q.status === 'pending_approval' ? "bg-amber-50 text-amber-700 border-amber-100" :
+                               "bg-zinc-100 text-zinc-600 border-zinc-200"
+                             )}>
+                               {q.status.replace('_', ' ')}
+                             </div>
+                           )}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1705,6 +2124,231 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
           </CardContent>
         </Card>
       )}
+
+      {/* ─── HOLE DATA POPUP ─── Auto-opens when selected belt item needs variable inputs */}
+      <Dialog open={holePopupOpen} onOpenChange={setHolePopupOpen}>
+        <DialogContent className="max-w-lg sm:max-w-lg mx-auto p-0 bg-white rounded-2xl border border-amber-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-amber-50 to-orange-50 px-6 py-5 border-b border-amber-100">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-amber-100 rounded-xl border border-amber-200">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-amber-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>
+              </div>
+              <div className="flex-1">
+                <h2 className="text-base font-black text-amber-900">Variables Configuration</h2>
+                {holePopupItem && (
+                  <p className="text-xs text-amber-700 font-bold mt-0.5">
+                    ● Working on: <span className="text-amber-900 uppercase tracking-wide">{holePopupItem.optionName || holePopupItem.name}</span>
+                    <span className="text-amber-500 font-medium"> — fill in the required variables below</span>
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Belt reference info */}
+          <div className="px-6 pt-4 pb-2">
+            <div className="bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 flex gap-6 text-xs">
+              <div>
+                <span className="text-zinc-400 font-bold uppercase text-[9px] block">Belt Length</span>
+                <span className="font-black text-zinc-800">{formData.length} {formData.lengthUnit}</span>
+              </div>
+              <div>
+                <span className="text-zinc-400 font-bold uppercase text-[9px] block">Belt Width</span>
+                <span className="font-black text-zinc-800">{formData.width} {formData.widthUnit}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Inputs */}
+          <div className="px-6 pb-4 pt-2 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-[10px] font-black uppercase tracking-wider text-amber-700">Area Length (mm)</Label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 1000"
+                  value={holeData.holeLength}
+                  onChange={(e) => setHoleData({ ...holeData, holeLength: e.target.value })}
+                  className="h-10 border-amber-200 bg-amber-50/40 focus:border-amber-400 focus:bg-white transition-all font-bold text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[10px] font-black uppercase tracking-wider text-amber-700">Area Width (mm)</Label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 500"
+                  value={holeData.holeWidth}
+                  onChange={(e) => setHoleData({ ...holeData, holeWidth: e.target.value })}
+                  className="h-10 border-amber-200 bg-amber-50/40 focus:border-amber-400 focus:bg-white transition-all font-bold text-sm"
+                />
+              </div>
+            </div>
+
+            {getRequiredFields().includes('holeDistHorizontal') && (
+              <div className="space-y-1.5">
+                <Label className="text-[10px] font-black uppercase tracking-wider text-amber-700">Horizontal Spacing — HHD (mm) <span className="text-amber-400 normal-case font-medium">(gap between holes)</span></Label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 15"
+                  value={holeData.holeDistHorizontal}
+                  onChange={(e) => setHoleData({ ...holeData, holeDistHorizontal: e.target.value })}
+                  className="h-10 border-amber-200 bg-amber-50/40 focus:border-amber-400 focus:bg-white transition-all font-bold text-sm"
+                />
+              </div>
+            )}
+
+            {getRequiredFields().includes('holeDistVertical') && (
+              <div className="space-y-1.5">
+                <Label className="text-[10px] font-black uppercase tracking-wider text-amber-700">Vertical Spacing — VHD (mm) <span className="text-amber-400 normal-case font-medium">(gap between holes)</span></Label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 12"
+                  value={holeData.holeDistVertical}
+                  onChange={(e) => setHoleData({ ...holeData, holeDistVertical: e.target.value })}
+                  className="h-10 border-amber-200 bg-amber-50/40 focus:border-amber-400 focus:bg-white transition-all font-bold text-sm"
+                />
+              </div>
+            )}
+
+            {/* Hole Size — ALWAYS shown when spacing fields are present (needed for Pitch = Spacing + HoleSize) */}
+            {(getRequiredFields().includes('holeSize') || getRequiredFields().includes('holeDistHorizontal') || getRequiredFields().includes('holeDistVertical')) && (
+              <div className="space-y-1.5">
+                <Label className="text-[10px] font-black uppercase tracking-wider text-amber-700">
+                  Hole / Eyelet Size — HS (mm)
+                  <span className="text-amber-400 normal-case font-medium ml-1">(Pitch = HHD + HS)</span>
+                </Label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 5"
+                  value={holeData.holeSize}
+                  onChange={(e) => setHoleData({ ...holeData, holeSize: e.target.value })}
+                  className="h-10 border-amber-200 bg-amber-50/40 focus:border-amber-400 focus:bg-white transition-all font-bold text-sm"
+                />
+              </div>
+            )}
+
+            {getRequiredFields().includes('pricePerHole') && (
+              <div className="space-y-1.5">
+                <Label className="text-[10px] font-black uppercase tracking-wider text-amber-700">Price per Hole / Eyelet (₹)</Label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 2.50"
+                  value={holeData.pricePerHole}
+                  onChange={(e) => setHoleData({ ...holeData, pricePerHole: e.target.value })}
+                  className="h-10 border-amber-200 bg-amber-50/40 focus:border-amber-400 focus:bg-white transition-all font-bold text-sm"
+                />
+              </div>
+            )}
+
+            {/* ─── LIVE CALCULATION PREVIEW (Center-to-Center / Pitch Logic) ─── */}
+            {(() => {
+              const L = parseFloat(holeData.holeLength) || 0;
+              const W = parseFloat(holeData.holeWidth) || 0;
+              const hSpacing = parseFloat(holeData.holeDistHorizontal) || 0; // gap between holes
+              const vSpacing = parseFloat(holeData.holeDistVertical) || 0;   // gap between holes
+              const holeSize = parseFloat(holeData.holeSize) || 0;
+              const showLive = getRequiredFields().includes('holeDistHorizontal') || getRequiredFields().includes('holeDistVertical');
+              if (!showLive) return null;
+
+              // PITCH (Center-to-Center) = Spacing (khaali gap) + Hole Size
+              // e.g. spacing=15mm + hole=5mm → pitch=20mm center-to-center
+              const pitchH = hSpacing > 0 ? hSpacing + holeSize : 0;
+              const pitchV = vSpacing > 0 ? vSpacing + holeSize : 0;
+
+              // Holes = floor(Length / Pitch) + 1  (corner se shuru, corner tak)
+              const holesH = pitchH > 0 && L > 0 ? Math.floor(L / pitchH) + 1 : null;
+              const holesV = pitchV > 0 && W > 0 ? Math.floor(W / pitchV) + 1 : null;
+              const totalHoles = (holesH !== null && holesV !== null) ? holesH * holesV : null;
+
+              return (
+                <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4 space-y-3">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-amber-600">📐 Live Hole Count Preview (Center-to-Center)</p>
+
+                  {/* Pitch row */}
+                  {holeSize > 0 && (hSpacing > 0 || vSpacing > 0) && (
+                    <div className="grid grid-cols-2 gap-2">
+                      {hSpacing > 0 && (
+                        <div className="bg-white/80 border border-amber-100 rounded-lg px-3 py-1.5 text-center">
+                          <span className="text-[9px] font-black uppercase text-amber-400 block">H Pitch</span>
+                          <span className="text-xs font-black text-amber-800">{hSpacing} + {holeSize} = <span className="text-amber-600">{pitchH}mm</span></span>
+                        </div>
+                      )}
+                      {vSpacing > 0 && (
+                        <div className="bg-white/80 border border-amber-100 rounded-lg px-3 py-1.5 text-center">
+                          <span className="text-[9px] font-black uppercase text-amber-400 block">V Pitch</span>
+                          <span className="text-xs font-black text-amber-800">{vSpacing} + {holeSize} = <span className="text-amber-600">{pitchV}mm</span></span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Hole count cards */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-white rounded-lg p-2.5 border border-amber-100 text-center">
+                      <span className="text-[9px] font-black uppercase text-amber-500 block">Horizontal</span>
+                      <span className="text-xl font-black text-amber-900">
+                        {holesH !== null ? holesH : <span className="text-zinc-400 text-sm">—</span>}
+                      </span>
+                      <span className="text-[9px] text-amber-400 font-medium">
+                        {L > 0 && pitchH > 0 ? `⌊${L}÷${pitchH}⌋+1` : 'fill HHD'}
+                      </span>
+                    </div>
+                    <div className="bg-white rounded-lg p-2.5 border border-amber-100 text-center">
+                      <span className="text-[9px] font-black uppercase text-amber-500 block">Vertical</span>
+                      <span className="text-xl font-black text-amber-900">
+                        {holesV !== null ? holesV : <span className="text-zinc-400 text-sm">—</span>}
+                      </span>
+                      <span className="text-[9px] text-amber-400 font-medium">
+                        {W > 0 && pitchV > 0 ? `⌊${W}÷${pitchV}⌋+1` : 'fill VHD'}
+                      </span>
+                    </div>
+                    <div className="bg-amber-500 rounded-lg p-2.5 text-center">
+                      <span className="text-[9px] font-black uppercase text-amber-100 block">Total</span>
+                      <span className="text-xl font-black text-white">
+                        {totalHoles !== null ? totalHoles.toLocaleString() : <span className="text-amber-200 text-sm">—</span>}
+                      </span>
+                      <span className="text-[9px] text-amber-100 font-medium">{totalHoles !== null ? 'eyelets' : 'H × V'}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div className="flex gap-2 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1 border-zinc-200 text-zinc-600 h-10 font-bold"
+                onClick={() => {
+                  setHolePopupOpen(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="flex-1 bg-amber-500 hover:bg-amber-600 text-white h-10 font-black"
+                disabled={(() => {
+                  const req = getRequiredFields();
+                  return req.some(f => {
+                    if (f === 'holeSize') return !holeData.holeSize;
+                    if (f === 'holeDistHorizontal') return !holeData.holeDistHorizontal;
+                    if (f === 'holeDistVertical') return !holeData.holeDistVertical;
+                    if (f === 'pricePerHole') return !holeData.pricePerHole;
+                    return false;
+                  }) || !holeData.holeLength || !holeData.holeWidth;
+                })()}
+                onClick={() => {
+                  setHolePopupOpen(false);
+                }}
+              >
+                Confirm & Save ✓
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog Confirmation Modal */}
       <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
@@ -1774,7 +2418,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                           <span className="font-bold text-zinc-700">{item.name}</span>
                           {selectedOptIndices.length === 0 && (
                             <span className="text-[10px] text-zinc-400 italic">
-                              {hasOptions ? `Default (₹${item.options[0]?.rate ?? item.rate}/${item.options[0]?.unit ?? item.unit})` : 'Default'}
+                              {hasOptions && user?.role === 'admin' ? `Default (₹${item.options[0]?.rate ?? item.rate}/${item.options[0]?.unit ?? item.unit})` : 'Default'}
                             </span>
                           )}
                         </div>
@@ -1791,9 +2435,11 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                                   <span className="text-zinc-400">↳</span>
                                   <span className="font-semibold">{opt.name}</span>
                                 </span>
-                                <span className="text-[9px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded-md shrink-0">
-                                  ₹{opt.rate}/{opt.unit || item.unit}
-                                </span>
+                                {user?.role === 'admin' && (
+                                  <span className="text-[9px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded-md shrink-0">
+                                    ₹{opt.rate}/{opt.unit || item.unit}
+                                  </span>
+                                )}
                               </div>
                               {optRemark && (
                                 <div className="text-[10px] text-indigo-700 italic bg-indigo-50/60 px-1.5 py-0.5 rounded border border-indigo-100 ml-3">
@@ -1826,7 +2472,7 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
             </Button>
             <Button 
               onClick={executeCalculate}
-              className="flex-1 bg-zinc-900 hover:bg-zinc-800 text-white h-10 font-bold text-xs rounded-xl shadow-md"
+              className="flex-1 bg-[#1e40af] hover:bg-[#1d4ed8] text-white h-10 font-bold text-xs rounded-xl shadow-sm cursor-pointer"
             >
               Confirm & Calculate
             </Button>

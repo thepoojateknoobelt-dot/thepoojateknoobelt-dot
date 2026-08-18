@@ -579,7 +579,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <div className="p-1.5 bg-zinc-900 rounded-lg text-white">
+          <div className="p-1.5 bg-blue-50 text-[#1e40af] rounded-lg">
             <FileText className="h-4 w-4" />
           </div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900">Quotations & Orders</h1>
@@ -1072,35 +1072,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                   </div>
                 </div>
 
-                {/* Single Item Hole specifications overlay (only if legacy single item has holes) */}
-                {(!selectedQuotation.items || selectedQuotation.items.length === 0) && selectedQuotation.dimensions.hasHoles && (
-                  <div className="p-3.5 bg-indigo-50/60 border border-indigo-150 rounded-2xl space-y-1.5 animate-in fade-in duration-200 shadow-sm">
-                    <h4 className="text-[10px] font-black uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
-                      <AlertCircle className="h-3.5 w-3.5 text-indigo-700" />
-                      Holes Layout Specifications
-                    </h4>
-                    <div className="grid grid-cols-4 gap-2 text-xs font-semibold text-slate-700 mt-1">
-                      <div>
-                        <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider">Total Holes</span>
-                        <p className="text-sm font-black text-indigo-950">{selectedQuotation.dimensions.totalHoles}</p>
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider">Hole Size</span>
-                        <p className="text-xs font-bold text-slate-900">{selectedQuotation.dimensions.holeSize} mm</p>
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider">Spacing (H / V)</span>
-                        <p className="text-xs font-bold text-slate-900">
-                          {selectedQuotation.dimensions.holeDistHorizontal}mm / {selectedQuotation.dimensions.holeDistVertical}mm
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider">Price per Hole</span>
-                        <p className="text-xs font-bold text-slate-900">₹{selectedQuotation.dimensions.pricePerHole}</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
+
 
                 {/* Sales Markup details */}
                 {selectedQuotation.salesMarkup && selectedQuotation.salesMarkup > 0 && (
@@ -1179,15 +1151,7 @@ export const QuotationsList: React.FC<QuotationsListProps> = ({ config }) => {
                 Convert to Order
               </Button>
             )}
-            {selectedQuotation?.status === 'order' && (
-              <Button
-                className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white gap-2 font-bold shadow-lg shadow-indigo-200 transition-all duration-200"
-                onClick={() => { setSelectedQuotation(null); handleSmartCut(selectedQuotation!); }}
-              >
-                <Scissors className="h-4 w-4" />
-                Execute & Smart Cut
-              </Button>
-            )}
+
             {user?.role === 'admin' && selectedQuotation && (
               <Button 
                 variant="destructive" 

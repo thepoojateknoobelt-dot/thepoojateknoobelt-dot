@@ -22,6 +22,7 @@ export interface Roll {
   cuts: Cut[];
   totalSqm: number;
   remainingSqm: number;
+  efficiency?: number;
   isArchived: boolean;
   isReuse?: boolean;
   parentRollId?: string | null;

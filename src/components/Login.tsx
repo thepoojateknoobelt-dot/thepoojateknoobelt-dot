@@ -5,8 +5,14 @@ import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { toast } from 'sonner';
-import { Factory } from 'lucide-react';
 import { Background3D } from './Background3D';
+
+const PTBLogoIcon = () => (
+  <svg width="48" height="48" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
+    <polygon points="30,8 70,8 92,30 92,70 70,92 30,92 8,70 8,30" stroke="#1e40af" strokeWidth="8" fill="none"/>
+    <text x="50" y="60" fill="#1e40af" fontSize="26" fontWeight="900" textAnchor="middle" fontFamily="sans-serif" letterSpacing="-1">PTB</text>
+  </svg>
+);
 
 export const Login = () => {
   const [username, setUsername] = useState('');
@@ -59,43 +65,43 @@ export const Login = () => {
       
       <Background3D />
 
-      <Card className="w-full max-w-md border-white/40 bg-white/45 backdrop-blur-xl shadow-[0_20px_50px_rgba(0,0,0,0.06)] relative z-10">
+      <Card className="w-full max-w-md border-white/40 bg-white/45 backdrop-blur-xl shadow-[0_20px_50px_rgba(30,58,138,0.06)] relative z-10">
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center mb-4">
-            <div className="p-3 bg-zinc-900 rounded-2xl shadow-lg">
-              <Factory className="h-8 w-8 text-white" />
+            <div className="p-1 transform hover:rotate-6 transition-transform">
+              <PTBLogoIcon />
             </div>
           </div>
-          <CardTitle className="text-2xl font-bold tracking-tight text-zinc-900">Pooja Tekno Belt</CardTitle>
+          <CardTitle className="text-2xl font-black tracking-tight text-[#1e3a8a]">POOJA TEKNOBELT</CardTitle>
           <CardDescription className="text-zinc-500">Enter your credentials to access the portal</CardDescription>
         </CardHeader>
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="username">Username</Label>
+              <Label htmlFor="username" className="text-xs font-bold text-[#1e3a8a] uppercase tracking-wider">Username</Label>
               <Input
                 id="username"
                 placeholder="admin"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
-                className="bg-white/80 border-zinc-300 focus:ring-zinc-900"
+                className="bg-white/80 border-blue-200 rounded-[6px] focus:border-blue-600 focus:ring-blue-100"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password" className="text-xs font-bold text-[#1e3a8a] uppercase tracking-wider">Password</Label>
               <Input
                 id="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="bg-white/80 border-zinc-300 focus:ring-zinc-900"
+                className="bg-white/80 border-blue-200 rounded-[6px] focus:border-blue-600 focus:ring-blue-100"
               />
             </div>
           </CardContent>
           <CardFooter className="pt-2">
-            <Button type="submit" className="w-full bg-zinc-900 hover:bg-zinc-800 text-white font-semibold shadow-md active:scale-[0.98] transition-transform" disabled={isLoading}>
+            <Button type="submit" className="w-full bg-[#1e40af] hover:bg-[#1d4ed8] text-white font-semibold shadow-md active:scale-[0.98] transition-transform cursor-pointer">
               {isLoading ? 'Signing in...' : 'Sign In'}
             </Button>
           </CardFooter>
