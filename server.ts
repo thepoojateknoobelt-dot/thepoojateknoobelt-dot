@@ -80,13 +80,38 @@ async function initializeDatabase() {
       )
     `);
 
-    // Ensure mobile, address, and gstin columns exist on clients table
+    // Ensure mobile, address, gstin, and category columns exist on clients table + drop NOT NULL on name
     try {
       await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS mobile VARCHAR(50)`);
       await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS address TEXT`);
       await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS gstin VARCHAR(50)`);
+      await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS category VARCHAR(100) DEFAULT 'General'`);
+      await pool.query(`ALTER TABLE clients ALTER COLUMN name DROP NOT NULL`);
     } catch (alterErr) {
-      console.warn('Failed to add columns to clients table:', alterErr);
+      console.warn('Failed to add columns/alter clients table:', alterErr);
+    }
+
+    // Create Client Categories table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS client_categories (
+        id VARCHAR(100) PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Seed default categories if table is empty
+    try {
+      const catCountRes = await pool.query('SELECT count(*) FROM client_categories');
+      if (parseInt(catCountRes.rows[0].count, 10) === 0) {
+        const defaultCats = ['Manufacturing', 'Retail', 'Trader', 'OEM', 'Distributor', 'End User'];
+        for (const catName of defaultCats) {
+          const id = 'cat-' + catName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+          await pool.query('INSERT INTO client_categories (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING', [id, catName]);
+        }
+      }
+    } catch (catSeedErr) {
+      console.warn('Failed to seed client categories:', catSeedErr);
     }
 
     // Create System Config table
@@ -2944,15 +2969,66 @@ app.get('/api/aws-ping', async (req: any, res) => {
   }
 });
 
+// Client Categories Routes
+app.get('/api/client-categories', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM client_categories ORDER BY name ASC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Failed to get client categories', err);
+    res.status(500).json({ error: 'Failed to retrieve client categories' });
+  }
+});
+
+app.post('/api/client-categories', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Category name is required' });
+    const cleanName = name.trim();
+    const id = 'cat-' + Date.now();
+    await pool.query('INSERT INTO client_categories (id, name) VALUES ($1, $2)', [id, cleanName]);
+    res.json({ id, name: cleanName });
+  } catch (err) {
+    console.error('Failed to add client category', err);
+    res.status(500).json({ error: 'Failed to add client category' });
+  }
+});
+
+app.put('/api/client-categories/:id', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Category name is required' });
+    await pool.query('UPDATE client_categories SET name = $1 WHERE id = $2', [name.trim(), req.params.id]);
+    res.json({ id: req.params.id, name: name.trim() });
+  } catch (err) {
+    console.error('Failed to update client category', err);
+    res.status(500).json({ error: 'Failed to update client category' });
+  }
+});
+
+app.delete('/api/client-categories/:id', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    await pool.query('DELETE FROM client_categories WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to delete client category', err);
+    res.status(500).json({ error: 'Failed to delete client category' });
+  }
+});
+
 // Clients Routes
 app.get('/api/clients', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM clients');
     const clients = result.rows.map(row => ({
       id: row.id,
-      name: row.name,
+      name: row.name || '',
       company: row.company,
       city: row.city,
+      category: row.category || 'General',
       profitMargins: row.profit_margins,
       mobile: row.mobile || '',
       address: row.address || '',
@@ -2968,7 +3044,7 @@ app.get('/api/clients', async (req, res) => {
 app.post('/api/clients', authenticate, async (req, res) => {
   try {
     const id = Date.now().toString();
-    const { name, company, city, profitMargins, mobile = '', address = '', gstin = '' } = req.body;
+    const { name = '', company, city, profitMargins, mobile = '', address = '', gstin = '', category = 'General' } = req.body;
 
     const trimmedMobile = mobile ? mobile.trim() : '';
     if (trimmedMobile) {
@@ -2979,10 +3055,10 @@ app.post('/api/clients', authenticate, async (req, res) => {
     }
 
     await pool.query(
-      'INSERT INTO clients (id, name, company, city, profit_margins, mobile, address, gstin) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [id, name, company, city, JSON.stringify(profitMargins), mobile, address, gstin]
+      'INSERT INTO clients (id, name, company, city, profit_margins, mobile, address, gstin, category) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      [id, name || '', company, city, JSON.stringify(profitMargins), mobile, address, gstin, category || 'General']
     );
-    res.json({ id, name, company, city, profitMargins, mobile, address, gstin });
+    res.json({ id, name: name || '', company, city, profitMargins, mobile, address, gstin, category: category || 'General' });
   } catch (err) {
     console.error('Failed to create client', err);
     res.status(500).json({ error: 'Failed to create client' });
@@ -2991,7 +3067,7 @@ app.post('/api/clients', authenticate, async (req, res) => {
 
 app.put('/api/clients/:id', authenticate, async (req, res) => {
   try {
-    const { name, company, city, mobile, profitMargins } = req.body;
+    const { name = '', company, city, mobile, profitMargins, category = 'General', address = '', gstin = '' } = req.body;
 
     const trimmedMobile = mobile ? mobile.trim() : '';
     if (trimmedMobile) {
@@ -3002,8 +3078,8 @@ app.put('/api/clients/:id', authenticate, async (req, res) => {
     }
     
     const result = await pool.query(
-      'UPDATE clients SET name = $1, company = $2, city = $3, mobile = $4, profit_margins = $5 WHERE id = $6 RETURNING *',
-      [name, company, city, mobile || null, JSON.stringify(profitMargins), req.params.id]
+      'UPDATE clients SET name = $1, company = $2, city = $3, mobile = $4, profit_margins = $5, category = $6, address = COALESCE($7, address), gstin = COALESCE($8, gstin) WHERE id = $9 RETURNING *',
+      [name || '', company, city, mobile || null, JSON.stringify(profitMargins), category || 'General', address, gstin, req.params.id]
     );
 
     if (result.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
@@ -3011,10 +3087,13 @@ app.put('/api/clients/:id', authenticate, async (req, res) => {
     const row = result.rows[0];
     res.json({
       id: row.id,
-      name: row.name,
+      name: row.name || '',
       company: row.company,
       city: row.city,
+      category: row.category || 'General',
       mobile: row.mobile,
+      address: row.address,
+      gstin: row.gstin,
       profitMargins: row.profit_margins
     });
   } catch (err) {

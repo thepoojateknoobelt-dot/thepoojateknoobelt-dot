@@ -108,11 +108,18 @@ export interface ProfitRange {
   margin: number;
 }
 
-export interface Client {
+export interface ClientCategory {
   id: string;
   name: string;
+  created_at?: string;
+}
+
+export interface Client {
+  id: string;
+  name?: string;
   company: string;
   city: string;
+  category?: string;
   /**
    * Nested profit margins: beltType → styleName → ProfitRange[]
    * e.g. { "PTFE": { "4x4 Fabric": [...], "2x2 Fabric": [...] } }
@@ -122,6 +129,8 @@ export interface Client {
    */
   profitMargins: Record<string, Record<string, ProfitRange[]>>;
   mobile?: string;
+  address?: string;
+  gstin?: string;
 }
 
 export interface QuotationItem {
