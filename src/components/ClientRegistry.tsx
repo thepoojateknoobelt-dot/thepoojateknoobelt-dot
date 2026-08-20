@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Client, Config, ProfitRange, Quotation } from '../types';
+import { Client, Config, ProfitRange, Quotation, ClientCategory } from '../types';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -12,7 +12,7 @@ import {
   UserPlus, Trash2, Upload, Download, Search, Edit2, Save, X,
   Phone, MapPin, Building2, TrendingUp, FileText, Clock,
   CheckCircle2, XCircle, ShoppingCart, ChevronRight, Package,
-  RotateCcw, User, Filter, Check
+  RotateCcw, User, Filter, Check, Tags, Eye, Percent, Layers, Info, Sparkles
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
@@ -54,6 +54,7 @@ const statusBadge = (status: string) => {
 interface ClientModalProps {
   client: Client | null;
   config: Config;
+  categories?: ClientCategory[];
   onClose: () => void;
   onSaved: () => void;
 }
@@ -75,20 +76,51 @@ const getStyleRanges = (
   return [];
 };
 
-const ClientModal: React.FC<ClientModalProps> = ({ client, config, onClose, onSaved }) => {
+const ClientModal: React.FC<ClientModalProps> = ({ client, config, categories = [], onClose, onSaved }) => {
   const { user } = useAuth();
   const [tab, setTab] = useState<'overview' | 'history' | 'margins' | 'edit'>('overview');
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [loadingQ, setLoadingQ] = useState(false);
-  // Expanded belt type accordion in edit margins
+  const [selectedHistoryQuotation, setSelectedHistoryQuotation] = useState<Quotation | null>(null);
   const [expandedTypes, setExpandedTypes] = useState<Record<string, boolean>>({});
 
+  const getQuotationMarginPercent = (q: Quotation): string => {
+    const firstItem = Array.isArray(q.items) && q.items.length > 0 ? q.items[0] : null;
+    if (firstItem?.calculated?.summary?.profitMargin !== undefined) {
+      return `${firstItem.calculated.summary.profitMargin}%`;
+    }
+    if ((q as any).calculated?.summary?.profitMargin !== undefined) {
+      return `${(q as any).calculated.summary.profitMargin}%`;
+    }
+    if (client && q.beltType && q.beltStyle) {
+      const ranges = getStyleRanges(client.profitMargins || {}, q.beltType, q.beltStyle);
+      if (ranges.length > 0 && ranges[0].margin !== undefined) {
+        return `${ranges[0].margin}%`;
+      }
+    }
+    return '20%';
+  };
+
+  const getQuotationProfitAmount = (q: Quotation): number => {
+    const firstItem = Array.isArray(q.items) && q.items.length > 0 ? q.items[0] : null;
+    if (firstItem?.calculated?.summary?.profitAmount !== undefined) {
+      return firstItem.calculated.summary.profitAmount;
+    }
+    if ((q as any).calculated?.summary?.profitAmount !== undefined) {
+      return (q as any).calculated.summary.profitAmount;
+    }
+    const marginStr = getQuotationMarginPercent(q);
+    const marginNum = parseFloat(marginStr) || 20;
+    return (q.totalCost * marginNum) / (100 + marginNum);
+  };
+
   // Edit state — nested: { beltTypeName: { styleName: ProfitRange[] } }
-  const [editName, setEditName]       = useState(client?.name || '');
-  const [editCompany, setEditCompany] = useState(client?.company || '');
-  const [editCity, setEditCity]       = useState(client?.city || '');
-  const [editMobile, setEditMobile]   = useState(client?.mobile || '');
-  const [editMargins, setEditMargins] = useState<Record<string, Record<string, ProfitRange[]>>>(client?.profitMargins || {});
+  const [editName, setEditName]         = useState(client?.name || '');
+  const [editCompany, setEditCompany]   = useState(client?.company || '');
+  const [editCity, setEditCity]         = useState(client?.city || '');
+  const [editMobile, setEditMobile]     = useState(client?.mobile || '');
+  const [editCategory, setEditCategory] = useState(client?.category || 'General');
+  const [editMargins, setEditMargins]   = useState<Record<string, Record<string, ProfitRange[]>>>(client?.profitMargins || {});
   const [saving, setSaving] = useState(false);
 
   // Reset when client changes
@@ -99,6 +131,7 @@ const ClientModal: React.FC<ClientModalProps> = ({ client, config, onClose, onSa
     setEditCompany(client.company || '');
     setEditCity(client.city || '');
     setEditMobile(client.mobile || '');
+    setEditCategory(client.category || 'General');
     setEditMargins(client.profitMargins || {});
     setExpandedTypes({});
     fetchQuotations(client.id);
@@ -135,6 +168,7 @@ const ClientModal: React.FC<ClientModalProps> = ({ client, config, onClose, onSa
           company: editCompany,
           city: editCity,
           mobile: editMobile,
+          category: editCategory || 'General',
           profitMargins: editMargins,
         }),
       });
@@ -172,23 +206,29 @@ const ClientModal: React.FC<ClientModalProps> = ({ client, config, onClose, onSa
     <Dialog open={!!client} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-4xl sm:max-w-4xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
         {/* ── Header ── */}
-        <DialogHeader className="shrink-0 px-6 pt-6 pb-4 border-b border-zinc-150">
+        <DialogHeader className="shrink-0 px-6 pr-14 pt-6 pb-4 border-b border-zinc-150">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-4 min-w-0">
               <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-zinc-850 to-zinc-650 flex items-center justify-center text-white text-lg font-black shrink-0 shadow-md">
-                {client.name.charAt(0).toUpperCase()}
+                {(client.name || client.company || 'C').charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0">
                 <DialogTitle className="text-xl font-black text-zinc-900 leading-tight whitespace-normal break-words pr-4">
-                  {client.name}
+                  {client.name ? client.name : client.company}
                 </DialogTitle>
                 <DialogDescription className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-zinc-550 text-xs font-semibold">
-                  <span className="flex items-center gap-1">
-                    <Building2 className="h-3.5 w-3.5 text-zinc-400" />{client.company}
-                  </span>
-                  <span className="text-zinc-300">•</span>
+                  {client.name && (
+                    <span className="flex items-center gap-1">
+                      <Building2 className="h-3.5 w-3.5 text-zinc-400" />{client.company}
+                    </span>
+                  )}
+                  {client.name && <span className="text-zinc-300">•</span>}
                   <span className="flex items-center gap-1">
                     <MapPin className="h-3.5 w-3.5 text-zinc-400" />{client.city}
+                  </span>
+                  <span className="text-zinc-300">•</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    {client.category || 'General'}
                   </span>
                   {client.mobile && (
                     <>
@@ -364,8 +404,11 @@ const ClientModal: React.FC<ClientModalProps> = ({ client, config, onClose, onSa
           {tab === 'history' && (
             <div className="p-6 space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-black text-zinc-800">Full Quotation & Order History</h3>
-                <span className="text-xs text-zinc-400">{quotations.length} records</span>
+                <div>
+                  <h3 className="text-sm font-black text-zinc-800">Full Quotation & Order History</h3>
+                  <p className="text-xs text-zinc-400">Click "View Breakdown" on any row to see full specifications, materials, and profit margin details.</p>
+                </div>
+                <span className="text-xs font-bold text-zinc-600 bg-zinc-100 px-2.5 py-1 rounded-full border border-zinc-200">{quotations.length} records</span>
               </div>
               {loadingQ ? (
                 <p className="text-xs text-zinc-400 italic p-4">Loading...</p>
@@ -376,38 +419,89 @@ const ClientModal: React.FC<ClientModalProps> = ({ client, config, onClose, onSa
                   <p className="text-xs mt-1">This client has no history yet.</p>
                 </div>
               ) : (
-                <div className="border border-zinc-200 rounded-xl overflow-hidden">
-                  <Table>
-                    <TableHeader className="bg-zinc-50/80">
+                <div className="border border-zinc-200 rounded-xl overflow-hidden shadow-2xs">
+                  <Table className="w-full">
+                    <TableHeader className="bg-zinc-50/90 font-bold uppercase tracking-wider text-zinc-500 text-[10px]">
                       <TableRow>
-                        <TableHead className="text-xs font-black text-zinc-500 py-3">Order ID</TableHead>
-                        <TableHead className="text-xs font-black text-zinc-500 py-3">Date</TableHead>
-                        <TableHead className="text-xs font-black text-zinc-500 py-3">Belt Details</TableHead>
-                        <TableHead className="text-xs font-black text-zinc-500 py-3">Dimensions</TableHead>
-                        <TableHead className="text-xs font-black text-zinc-500 py-3 text-right">Amount</TableHead>
-                        <TableHead className="text-xs font-black text-zinc-500 py-3">Status</TableHead>
+                        <TableHead className="text-[10px] font-black text-zinc-600 py-2.5 px-3">Order / Date</TableHead>
+                        <TableHead className="text-[10px] font-black text-zinc-600 py-2.5 px-2">Belt Details</TableHead>
+                        <TableHead className="text-[10px] font-black text-zinc-600 py-2.5 px-2">Dimensions</TableHead>
+                        <TableHead className="text-[10px] font-black text-zinc-600 py-2.5 px-2 text-center">Margin</TableHead>
+                        <TableHead className="text-[10px] font-black text-zinc-600 py-2.5 px-2 text-right">Amount</TableHead>
+                        <TableHead className="text-[10px] font-black text-zinc-600 py-2.5 px-2 text-center">Status</TableHead>
+                        <TableHead className="text-[10px] font-black text-zinc-600 py-2.5 px-3 text-right">Breakdown</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {quotations.map(q => (
-                        <TableRow key={q.id} className="hover:bg-zinc-50/50 transition-colors">
-                          <TableCell className="font-mono text-xs font-bold text-zinc-600 py-3">
-                            #{(q as any).orderNumber || q.id.slice(-6)}
-                          </TableCell>
-                          <TableCell className="text-xs text-zinc-500 py-3">{formatDate(q.createdAt)}</TableCell>
-                          <TableCell className="py-3">
-                            <div className="text-xs font-semibold text-zinc-800">{q.beltType}</div>
-                            {q.beltStyle && <div className="text-[10px] text-zinc-400">{q.beltStyle}</div>}
-                          </TableCell>
-                          <TableCell className="text-xs font-mono text-zinc-600 py-3">
-                            {q.dimensions.length}{q.dimensions.lengthUnit || q.dimensions.unit || 'mm'} × {q.dimensions.width}{q.dimensions.widthUnit || q.dimensions.unit || 'mm'}
-                          </TableCell>
-                          <TableCell className="text-right text-xs font-black text-zinc-900 py-3">
-                            {formatCurrency(q.totalCost)}
-                          </TableCell>
-                          <TableCell className="py-3">{statusBadge(q.status)}</TableCell>
-                        </TableRow>
-                      ))}
+                      {quotations.map(q => {
+                        const marginPercent = getQuotationMarginPercent(q);
+                        const hasHoles = q.dimensions?.hasHoles || (q.dimensions?.totalHoles && q.dimensions.totalHoles > 0);
+                        const joint = q.jointType || (Array.isArray(q.items) && q.items[0]?.jointType) || '';
+                        const tape = q.tapeType || (Array.isArray(q.items) && q.items[0]?.tapeType) || '';
+
+                        return (
+                          <TableRow key={q.id} className="hover:bg-zinc-50/70 transition-colors">
+                            {/* Order & Date */}
+                            <TableCell className="py-2.5 px-3">
+                              <div className="font-mono text-xs font-black text-zinc-800">
+                                #{(q as any).orderNumber || q.id.slice(-6)}
+                              </div>
+                              <div className="text-[10px] text-zinc-400 font-medium whitespace-nowrap">
+                                {formatDate(q.createdAt)}
+                              </div>
+                            </TableCell>
+
+                            {/* Belt Details & Joint/Tape Specs */}
+                            <TableCell className="py-2.5 px-2">
+                              <div className="text-xs font-bold text-zinc-900 truncate max-w-[140px]">{q.beltType}</div>
+                              <div className="text-[10px] text-zinc-500 font-medium truncate max-w-[140px]">
+                                {q.beltStyle || 'Standard'}
+                                {joint && joint !== '—' && <span className="text-zinc-400"> • {joint}</span>}
+                              </div>
+                            </TableCell>
+
+                            {/* Dimensions & Punching */}
+                            <TableCell className="py-2.5 px-2 font-mono text-xs text-zinc-700 whitespace-nowrap">
+                              {q.dimensions.length}{q.dimensions.lengthUnit || q.dimensions.unit || 'mm'} × {q.dimensions.width}{q.dimensions.widthUnit || q.dimensions.unit || 'mm'}
+                              {hasHoles && (
+                                <span className="block text-[9px] font-bold text-indigo-650 font-sans">
+                                  {q.dimensions.totalHoles || 'Yes'} holes
+                                </span>
+                              )}
+                            </TableCell>
+
+                            {/* Margin % */}
+                            <TableCell className="py-2.5 px-2 text-center">
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <Percent className="h-2.5 w-2.5" />
+                                {marginPercent.replace('%', '')}%
+                              </span>
+                            </TableCell>
+
+                            {/* Amount */}
+                            <TableCell className="text-right py-2.5 px-2 font-mono text-xs font-black text-zinc-900 whitespace-nowrap">
+                              {formatCurrency(q.totalCost)}
+                            </TableCell>
+
+                            {/* Status */}
+                            <TableCell className="py-2.5 px-2 text-center whitespace-nowrap">
+                              {statusBadge(q.status)}
+                            </TableCell>
+
+                            {/* Action Breakdown Button */}
+                            <TableCell className="py-2.5 px-3 text-right whitespace-nowrap">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6.5 px-2 text-[10px] font-bold gap-1 border-blue-200 text-[#1e40af] hover:bg-blue-50 rounded-md shadow-2xs"
+                                onClick={() => setSelectedHistoryQuotation(q)}
+                              >
+                                <Eye className="h-3 w-3" /> Details
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>
@@ -478,18 +572,38 @@ const ClientModal: React.FC<ClientModalProps> = ({ client, config, onClose, onSa
                 <h3 className="text-xs font-black uppercase tracking-wider text-zinc-600">Basic Information</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-zinc-650">Client Name *</Label>
-                    <Input value={editName} onChange={e => setEditName(e.target.value)} className="h-10 text-sm border-zinc-300 focus-visible:ring-zinc-400 font-semibold" />
+                    <Label className="text-xs font-bold text-zinc-650">Client Name <span className="text-zinc-400 font-normal">(Optional)</span></Label>
+                    <Input value={editName} onChange={e => setEditName(e.target.value)} placeholder="e.g. Nilesh Soni" className="h-10 text-sm border-zinc-300 focus-visible:ring-zinc-400 font-semibold" />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-zinc-655">Company *</Label>
-                    <Input value={editCompany} onChange={e => setEditCompany(e.target.value)} className="h-10 text-sm border-zinc-300 focus-visible:ring-zinc-400 font-semibold" />
+                    <Label className="text-xs font-bold text-zinc-655">Company <span className="text-rose-500">*</span></Label>
+                    <Input value={editCompany} onChange={e => setEditCompany(e.target.value)} placeholder="e.g. PTB Industries" className="h-10 text-sm border-zinc-300 focus-visible:ring-zinc-400 font-semibold" />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-zinc-655">City *</Label>
-                    <Input value={editCity} onChange={e => setEditCity(e.target.value)} className="h-10 text-sm border-zinc-300 focus-visible:ring-zinc-400 font-semibold" />
+                    <Label className="text-xs font-bold text-zinc-655">Category</Label>
+                    <select
+                      value={editCategory}
+                      onChange={e => setEditCategory(e.target.value)}
+                      className="w-full h-10 rounded-md border border-zinc-300 bg-white px-3 py-2 text-xs font-bold text-zinc-800 shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400"
+                    >
+                      {(categories && categories.length > 0 ? categories : [
+                        { id: 'mfg', name: 'Manufacturing' },
+                        { id: 'ret', name: 'Retail' },
+                        { id: 'trd', name: 'Trader' },
+                        { id: 'oem', name: 'OEM' },
+                        { id: 'dis', name: 'Distributor' },
+                        { id: 'end', name: 'End User' },
+                        { id: 'gen', name: 'General' }
+                      ]).map(cat => (
+                        <option key={cat.id} value={cat.name}>{cat.name}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-zinc-655">City <span className="text-rose-500">*</span></Label>
+                    <Input value={editCity} onChange={e => setEditCity(e.target.value)} placeholder="e.g. SURAT" className="h-10 text-sm border-zinc-300 focus-visible:ring-zinc-400 font-semibold" />
+                  </div>
+                  <div className="space-y-1.5 sm:col-span-2">
                     <Label className="text-xs font-bold text-zinc-655">Mobile Number</Label>
                     <Input value={editMobile} onChange={e => setEditMobile(e.target.value)} className="h-10 text-sm font-mono border-zinc-300 focus-visible:ring-zinc-400" placeholder="e.g. 9876543210" />
                   </div>
@@ -668,6 +782,232 @@ const ClientModal: React.FC<ClientModalProps> = ({ client, config, onClose, onSa
           )}
         </div>
       </DialogContent>
+
+      {/* ── Detailed Quotation & Costing Breakdown Inspector Modal ── */}
+      <Dialog open={!!selectedHistoryQuotation} onOpenChange={(open) => !open && setSelectedHistoryQuotation(null)}>
+        <DialogContent className="max-w-3xl sm:max-w-3xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden bg-white shadow-2xl border-zinc-200">
+          {selectedHistoryQuotation && (() => {
+            const q = selectedHistoryQuotation;
+            const marginPercent = getQuotationMarginPercent(q);
+            const profitAmount = getQuotationProfitAmount(q);
+            const baseCost = Math.max(0, q.totalCost - profitAmount);
+            const dim = q.dimensions || { length: 0, width: 0, lengthUnit: 'mm', widthUnit: 'mm' };
+            const hasHoles = dim.hasHoles || (dim.totalHoles && dim.totalHoles > 0);
+            const joint = q.jointType || (Array.isArray(q.items) && q.items[0]?.jointType) || 'Standard';
+            const tape = q.tapeType || (Array.isArray(q.items) && q.items[0]?.tapeType) || 'Standard';
+
+            const category = (Array.isArray(config?.beltTypes) ? config.beltTypes : [])?.find?.(t => t.name === q.beltType) || null;
+            const style = (Array.isArray(category?.styles) ? category.styles : [])?.find?.(s => s.name === q.beltStyle) || null;
+            const bomItems = style?.bom || [];
+
+            const included = q.selectedBOMOptions?._included || {};
+            const customRates = q.selectedBOMOptions?._customRates || {};
+            const remarks = q.selectedBOMOptions?._remarks || {};
+            const includedItems = bomItems.filter(b => included[b.id] !== false);
+
+            return (
+              <>
+                {/* Header */}
+                <DialogHeader className="px-6 pr-16 py-4 border-b border-zinc-150 bg-gradient-to-r from-zinc-50 to-white shrink-0">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="h-10 w-10 rounded-xl bg-blue-50 text-[#1e40af] flex items-center justify-center font-black border border-blue-100 shrink-0">
+                        <FileText className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0">
+                        <DialogTitle className="text-base font-black text-zinc-900 flex items-center gap-2">
+                          <span>Quotation #{(q as any).orderNumber || q.id.slice(-6)}</span>
+                          {statusBadge(q.status)}
+                        </DialogTitle>
+                        <DialogDescription className="text-xs text-zinc-500 font-medium mt-0.5">
+                          Created on {formatDate(q.createdAt)} {q.createdBy ? `• By User: ${q.createdBy}` : ''}
+                        </DialogDescription>
+                      </div>
+                    </div>
+                    <div className="text-left sm:text-right shrink-0 bg-emerald-50/70 border border-emerald-200/80 rounded-xl px-3.5 py-1.5">
+                      <span className="text-[10px] uppercase font-black text-emerald-700 block tracking-wider">Final Price</span>
+                      <span className="text-lg font-black text-emerald-800 font-mono">{formatCurrency(q.totalCost)}</span>
+                    </div>
+                  </div>
+                </DialogHeader>
+
+                {/* Content Body */}
+                <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                  {/* Financial & Margin Cards Strip */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-3">
+                      <span className="text-[10px] font-black uppercase text-emerald-700 tracking-wider block mb-1">Profit Margin %</span>
+                      <p className="text-lg font-black text-emerald-800 flex items-center gap-1">
+                        <Percent className="h-4 w-4 text-emerald-600" />
+                        {marginPercent}
+                      </p>
+                      <span className="text-[10px] text-emerald-650 font-bold mt-0.5 block">
+                        Approx +{formatCurrency(profitAmount)} profit
+                      </span>
+                    </div>
+
+                    <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-3">
+                      <span className="text-[10px] font-black uppercase text-zinc-500 tracking-wider block mb-1">Base Cost</span>
+                      <p className="text-lg font-black text-zinc-800 font-mono">
+                        {formatCurrency(baseCost)}
+                      </p>
+                      <span className="text-[10px] text-zinc-400 font-semibold mt-0.5 block">
+                        Production / Materials
+                      </span>
+                    </div>
+
+                    <div className="bg-blue-50/60 border border-blue-200/80 rounded-xl p-3">
+                      <span className="text-[10px] font-black uppercase text-blue-700 tracking-wider block mb-1">Belt Category</span>
+                      <p className="text-sm font-black text-blue-900 truncate">
+                        {q.beltType}
+                      </p>
+                      <span className="text-[10px] text-blue-600 font-semibold mt-0.5 block truncate">
+                        Style: {q.beltStyle || 'Standard'}
+                      </span>
+                    </div>
+
+                    <div className="bg-purple-50/60 border border-purple-200/80 rounded-xl p-3">
+                      <span className="text-[10px] font-black uppercase text-purple-700 tracking-wider block mb-1">Dimensions</span>
+                      <p className="text-sm font-black text-purple-900 font-mono truncate">
+                        {dim.length}{dim.lengthUnit || 'mm'} × {dim.width}{dim.widthUnit || 'mm'}
+                      </p>
+                      <span className="text-[10px] text-purple-600 font-semibold mt-0.5 block">
+                        {hasHoles ? `Punching: ${dim.totalHoles || 'Yes'} holes` : 'No punching'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Specifications & Materials Given (Kya-Kya Diya) */}
+                  <div className="bg-zinc-50 rounded-xl border border-zinc-200 p-4 space-y-3">
+                    <div className="flex items-center gap-2 border-b border-zinc-200/80 pb-2">
+                      <Layers className="h-4 w-4 text-blue-600" />
+                      <h4 className="text-xs font-black uppercase tracking-wider text-zinc-800">
+                        Belt Specifications &amp; Materials (Kya-Kya Diya Tha)
+                      </h4>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <div className="bg-white rounded-lg p-3 border border-zinc-150 space-y-1">
+                        <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider block">Joint Specification</span>
+                        <p className="font-bold text-zinc-800 text-sm">{joint}</p>
+                      </div>
+
+                      <div className="bg-white rounded-lg p-3 border border-zinc-150 space-y-1">
+                        <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider block">Edge Tape &amp; Reinforcement</span>
+                        <p className="font-bold text-zinc-800 text-sm">{tape}</p>
+                      </div>
+
+                      {hasHoles && (
+                        <div className="bg-white rounded-lg p-3 border border-zinc-150 space-y-1 sm:col-span-2">
+                          <span className="text-[10px] font-black text-indigo-500 uppercase tracking-wider block">Hole Punching Details</span>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-semibold text-zinc-700 mt-1">
+                            <div><span className="text-zinc-400 text-[10px]">Hole Size:</span> {dim.holeSize || '—'} mm</div>
+                            <div><span className="text-zinc-400 text-[10px]">H-Pitch:</span> {dim.holeDistHorizontal || '—'} mm</div>
+                            <div><span className="text-zinc-400 text-[10px]">V-Pitch:</span> {dim.holeDistVertical || '—'} mm</div>
+                            <div><span className="text-zinc-400 text-[10px]">Total Holes:</span> {dim.totalHoles || '—'} pcs</div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Selected BOM Materials */}
+                      <div className="bg-white rounded-lg p-3 border border-zinc-150 space-y-1.5 sm:col-span-2">
+                        <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider block">BOM Material Components</span>
+                        {includedItems.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5 pt-0.5">
+                            {includedItems.map(item => (
+                              <span key={item.id} className="bg-zinc-100 border border-zinc-200 text-zinc-800 px-2 py-1 rounded-md text-[11px] font-bold">
+                                {item.name}
+                                {customRates[item.id] !== undefined && (
+                                  <span className="text-blue-700 font-extrabold ml-1">(₹{customRates[item.id]})</span>
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-zinc-400 italic">Standard belt composition applied.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Multi-Item Table if items exist */}
+                  {Array.isArray(q.items) && q.items.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-zinc-700">
+                        Quotation Items ({q.items.length})
+                      </h4>
+                      <div className="border border-zinc-200 rounded-xl overflow-hidden shadow-2xs">
+                        <Table>
+                          <TableHeader className="bg-zinc-50">
+                            <TableRow>
+                              <TableHead className="text-xs font-black text-zinc-600">#</TableHead>
+                              <TableHead className="text-xs font-black text-zinc-600">Item / Belt</TableHead>
+                              <TableHead className="text-xs font-black text-zinc-600">Dimensions</TableHead>
+                              <TableHead className="text-xs font-black text-zinc-600 text-right">Price</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {q.items.map((item, idx) => (
+                              <TableRow key={item.id || idx}>
+                                <TableCell className="font-bold text-zinc-500 text-xs">{idx + 1}</TableCell>
+                                <TableCell className="font-bold text-zinc-800 text-xs">
+                                  {item.beltType}
+                                  {item.beltStyle && <span className="text-zinc-400 font-normal ml-1">({item.beltStyle})</span>}
+                                </TableCell>
+                                <TableCell className="font-mono text-zinc-600 text-xs">
+                                  {item.dimensions?.length}{item.dimensions?.lengthUnit || 'mm'} × {item.dimensions?.width}{item.dimensions?.widthUnit || 'mm'}
+                                </TableCell>
+                                <TableCell className="text-right font-mono font-black text-zinc-900 text-xs">
+                                  {formatCurrency(item.totalCost)}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Summary & Audit Notes */}
+                  <div className="bg-zinc-50 rounded-xl p-4 border border-zinc-200 space-y-2">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-zinc-500 font-bold">Base Estimated Cost:</span>
+                      <span className="font-mono font-semibold text-zinc-800">{formatCurrency(baseCost)}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs text-emerald-700">
+                      <span className="font-bold">Profit Added ({marginPercent}):</span>
+                      <span className="font-mono font-bold">+{formatCurrency(profitAmount)}</span>
+                    </div>
+                    {q.salesMarkup && q.salesMarkup > 0 && (
+                      <div className="flex justify-between items-center text-xs text-blue-700">
+                        <span className="font-bold">Sales Markup:</span>
+                        <span className="font-mono font-bold">+{formatCurrency(q.salesMarkup)}</span>
+                      </div>
+                    )}
+                    {q.discountRequested && q.discountRequested > 0 && (
+                      <div className="flex justify-between items-center text-xs text-amber-700">
+                        <span className="font-bold">Discount ({q.discountReason || 'Requested'}):</span>
+                        <span className="font-mono font-bold">-{formatCurrency(q.discountRequested)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center text-sm font-black pt-2 border-t border-zinc-200">
+                      <span className="text-zinc-900">Total Price:</span>
+                      <span className="font-mono text-emerald-700 text-base">{formatCurrency(q.totalCost)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="px-6 py-3 border-t border-zinc-200 bg-zinc-50 flex justify-end shrink-0">
+                  <Button variant="outline" className="text-xs h-8" onClick={() => setSelectedHistoryQuotation(null)}>
+                    Close Breakdown
+                  </Button>
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 };
@@ -678,10 +1018,32 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
   const [search, setSearch] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [formData, setFormData] = useState({ name: '', company: '', city: '', mobile: '' });
+  const [clientCategories, setClientCategories] = useState<ClientCategory[]>([]);
+  const [formData, setFormData] = useState({ name: '', company: '', city: '', mobile: '', category: 'Manufacturing' });
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [cityFilter, setCityFilter] = useState('All');
   const [showCityFilterDropdown, setShowCityFilterDropdown] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState('All');
+  const [showCategoryFilterDropdown, setShowCategoryFilterDropdown] = useState(false);
+
+  const fetchClientCategories = async () => {
+    try {
+      const res = await fetch('/api/client-categories');
+      if (res.ok) {
+        const data = await res.json();
+        setClientCategories(data);
+        if (data.length > 0 && !formData.category) {
+          setFormData(prev => ({ ...prev, category: data[0].name }));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch client categories', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchClientCategories();
+  }, []);
 
   const uniqueCities = useMemo(() => {
     const cities = clients.map(c => c.city.trim()).filter(Boolean);
@@ -691,18 +1053,30 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
     return ['All', ...unique.sort()];
   }, [clients]);
 
+  const uniqueCategories = useMemo(() => {
+    const fromDB = clientCategories.map(c => c.name.trim()).filter(Boolean);
+    const fromClients = clients.map(c => (c.category || '').trim()).filter(Boolean);
+    const all = Array.from(new Set([...fromDB, ...fromClients, 'Manufacturing', 'Retail', 'Trader', 'OEM', 'Distributor', 'End User', 'General']));
+    return ['All', ...all.sort()];
+  }, [clientCategories, clients]);
+
   const handleAddClient = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formData.company.trim() || !formData.city.trim()) {
+      toast.error('Company and City are required!');
+      return;
+    }
     setIsAdding(true);
     try {
       const res = await fetch('/api/clients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: formData.name,
-          company: formData.company,
-          city: formData.city,
-          mobile: formData.mobile,
+          name: formData.name.trim(),
+          company: formData.company.trim(),
+          city: formData.city.trim(),
+          mobile: formData.mobile.trim(),
+          category: formData.category || 'General',
           // New nested structure: beltType -> styleName -> ProfitRange[]
           profitMargins: (Array.isArray(config?.beltTypes) ? config.beltTypes : []).reduce(
             (acc, type) => ({
@@ -721,7 +1095,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
         throw new Error(errorData.error || 'Add failed');
       }
       toast.success('Client added successfully!');
-      setFormData({ name: '', company: '', city: '', mobile: '' });
+      setFormData({ name: '', company: '', city: '', mobile: '', category: clientCategories[0]?.name || 'Manufacturing' });
       setShowAddModal(false);
       onRefresh?.();
     } catch (err: any) {
@@ -732,7 +1106,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
   };
 
   const handleDeleteClient = async (clientId: string, name: string) => {
-    if (!confirm(`Delete client "${name}"? This action cannot be undone.`)) return;
+    if (!confirm(`Delete client "${name || 'this client'}"? This action cannot be undone.`)) return;
     try {
       const res = await fetch(`/api/clients/${clientId}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Delete failed');
@@ -777,6 +1151,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
       const colMap = {
         name: headers.findIndex(h => h.toLowerCase() === 'name'),
         company: headers.findIndex(h => h.toLowerCase() === 'company'),
+        category: headers.findIndex(h => h.toLowerCase() === 'category'),
         city: headers.findIndex(h => h.toLowerCase() === 'city'),
         mobile: headers.findIndex(h => h.toLowerCase() === 'mobile'),
         address: headers.findIndex(h => h.toLowerCase() === 'address'),
@@ -788,21 +1163,21 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
       let errors = 0;
       for (let i = 1; i < lines.length; i++) {
         const values = parseCSVLine(lines[i]);
-        // Require at least name, company, city
-        if (colMap.name === -1 || colMap.company === -1 || colMap.city === -1) {
-          toast.error("CSV must contain Name, Company, and City headers");
+        // Require at least company and city
+        if (colMap.company === -1 || colMap.city === -1) {
+          toast.error("CSV must contain Company and City headers");
           return;
         }
         
-        const name = values[colMap.name] || '';
+        const name = colMap.name !== -1 ? (values[colMap.name] || '') : '';
         const company = values[colMap.company] || '';
+        const category = colMap.category !== -1 ? (values[colMap.category] || 'General') : 'General';
         const city = values[colMap.city] || '';
         const mobile = colMap.mobile !== -1 ? (values[colMap.mobile] || '') : '';
         const address = colMap.address !== -1 ? (values[colMap.address] || '') : '';
         const gstin = colMap.gstin !== -1 ? (values[colMap.gstin] || '') : '';
-        const profitMargin = colMap.profit !== -1 ? (parseFloat(values[colMap.profit]) || 20) : 20;
 
-        if (!name || !company || !city) continue;
+        if (!company && !name) continue;
 
         try {
           const res = await fetch('/api/clients', {
@@ -810,8 +1185,9 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               name,
-              company,
-              city,
+              company: company || name,
+              city: city || 'Unknown',
+              category: category || 'General',
               mobile,
               address,
               gstin,
@@ -852,13 +1228,15 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
   };
 
   const filteredClients = clients.filter(c => {
-    const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase()) ||
+    const matchesSearch = (c.name || '').toLowerCase().includes(search.toLowerCase()) ||
       c.company.toLowerCase().includes(search.toLowerCase()) ||
       c.city.toLowerCase().includes(search.toLowerCase()) ||
+      (c.category || '').toLowerCase().includes(search.toLowerCase()) ||
       (c.mobile || '').includes(search);
     
     const matchesCity = cityFilter === 'All' || c.city.toLowerCase() === cityFilter.toLowerCase();
-    return matchesSearch && matchesCity;
+    const matchesCategory = categoryFilter === 'All' || (c.category || 'General').toLowerCase() === categoryFilter.toLowerCase();
+    return matchesSearch && matchesCity && matchesCategory;
   });
 
   return (
@@ -879,7 +1257,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
             <input type="file" accept=".csv" className="hidden" onChange={handleBulkUpload} />
           </label>
           <Button variant="outline" className="gap-1.5 h-8 text-xs px-3 shadow-sm border-blue-100 text-[#1e3a8a] hover:bg-blue-50/50 rounded-[6px]" onClick={() => {
-            const csv = 'Name,Company,City,Mobile,DefaultProfit';
+            const csv = 'Name,Company,Category,City,Mobile,DefaultProfit';
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a'); a.href = url; a.download = 'clients_template.csv'; a.click();
@@ -903,7 +1281,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
             <div className="relative w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
               <Input
-                placeholder="Search by name, city..."
+                placeholder="Search by name, company, category..."
                 className="pl-9 h-8 text-xs"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
@@ -923,8 +1301,38 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
               <table className="min-w-full divide-y divide-zinc-200 text-left text-xs text-zinc-700">
                 <thead className="bg-zinc-50 font-bold uppercase tracking-wider text-zinc-500 text-[10px]">
                   <tr>
-                    <th scope="col" className="px-4 py-3">Name</th>
                     <th scope="col" className="px-4 py-3">Company</th>
+                    <th scope="col" className="px-4 py-3">Client Name</th>
+                    <th scope="col" className="px-4 py-3 relative">
+                      <div className="flex items-center gap-1.5 cursor-pointer select-none" onClick={() => setShowCategoryFilterDropdown(!showCategoryFilterDropdown)}>
+                        <span>Category</span>
+                        <Filter className={cn("h-3 w-3 transition", categoryFilter !== 'All' ? "text-indigo-600 fill-indigo-50" : "text-zinc-400")} />
+                      </div>
+                      {showCategoryFilterDropdown && (
+                        <>
+                          <div className="fixed inset-0 z-10" onClick={() => setShowCategoryFilterDropdown(false)} />
+                          <div className="absolute left-4 top-9 z-20 min-w-[150px] bg-white border border-zinc-200 rounded-xl shadow-lg py-1.5 text-xs font-bold normal-case tracking-normal animate-in fade-in duration-100">
+                            <div className="px-2.5 py-1 text-[9px] font-black text-zinc-400 uppercase tracking-wider border-b border-zinc-100">Filter Category</div>
+                            {uniqueCategories.map(cat => (
+                              <button
+                                key={cat}
+                                onClick={() => {
+                                  setCategoryFilter(cat);
+                                  setShowCategoryFilterDropdown(false);
+                                }}
+                                className={cn(
+                                  "w-full text-left px-3 py-1.5 hover:bg-zinc-50 flex items-center justify-between",
+                                  categoryFilter === cat && "text-indigo-600 bg-indigo-50/50"
+                                )}
+                              >
+                                <span>{cat}</span>
+                                {categoryFilter === cat && <Check className="h-3 w-3" />}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </th>
                     <th scope="col" className="px-4 py-3 relative">
                       <div className="flex items-center gap-1.5 cursor-pointer select-none" onClick={() => setShowCityFilterDropdown(!showCityFilterDropdown)}>
                         <span>City</span>
@@ -970,12 +1378,19 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-3">
                           <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-zinc-100 to-zinc-50 flex items-center justify-center text-zinc-700 text-xs font-black shrink-0 border border-zinc-200">
-                            {c.name.charAt(0).toUpperCase()}
+                            {(c.company || c.name || 'C').charAt(0).toUpperCase()}
                           </div>
-                          <span className="font-bold text-sm text-zinc-900 leading-tight">{c.name}</span>
+                          <span className="font-bold text-sm text-zinc-900 leading-tight">{c.company}</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3.5 text-zinc-500 font-semibold">{c.company}</td>
+                      <td className="px-4 py-3.5 text-zinc-600 font-semibold">
+                        {c.name ? c.name : <span className="text-zinc-300 italic">—</span>}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100/80">
+                          {c.category || 'General'}
+                        </span>
+                      </td>
                       <td className="px-4 py-3.5 text-zinc-600 font-semibold">{c.city}</td>
                       <td className="px-4 py-3.5 text-zinc-500 font-mono whitespace-nowrap">{c.mobile || '-'}</td>
                       {user?.role === 'admin' && (
@@ -1015,7 +1430,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
                               size="icon"
                               variant="ghost"
                               className="h-7 w-7 text-zinc-400 hover:text-rose-600 hover:bg-rose-50"
-                              onClick={() => handleDeleteClient(c.id, c.name)}
+                              onClick={() => handleDeleteClient(c.id, c.name || c.company)}
                               title="Delete"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
@@ -1033,7 +1448,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
       </Card>
 
       {/* Add New Client Modal */}
-      <Dialog open={showAddModal} onOpenChange={(open) => { setShowAddModal(open); if (!open) setFormData({ name: '', company: '', city: '', mobile: '' }); }}>
+      <Dialog open={showAddModal} onOpenChange={(open) => { setShowAddModal(open); if (!open) setFormData({ name: '', company: '', city: '', mobile: '', category: clientCategories[0]?.name || 'Manufacturing' }); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-base font-black flex items-center gap-2">
@@ -1043,32 +1458,52 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
           </DialogHeader>
           <form onSubmit={handleAddClient} className="space-y-4 pt-2">
             <div className="space-y-1.5">
-              <Label className="text-xs font-bold text-zinc-600">Client Name <span className="text-rose-500">*</span></Label>
-              <Input className="h-9 text-sm" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} placeholder="e.g. Nilesh Soni" required />
-            </div>
-            <div className="space-y-1.5">
               <Label className="text-xs font-bold text-zinc-600">Company <span className="text-rose-500">*</span></Label>
               <Input className="h-9 text-sm" value={formData.company} onChange={e => setFormData({ ...formData, company: e.target.value })} placeholder="e.g. PTB Industries" required />
             </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-zinc-600">Client Name <span className="text-zinc-400 font-normal">(Optional)</span></Label>
+              <Input className="h-9 text-sm" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} placeholder="e.g. Nilesh Soni" />
+            </div>
             <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-zinc-600">Category</Label>
+                <select
+                  value={formData.category}
+                  onChange={e => setFormData({ ...formData, category: e.target.value })}
+                  className="w-full h-9 rounded-md border border-zinc-200 bg-white px-3 py-1 text-xs font-bold text-zinc-800 shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400"
+                >
+                  {(clientCategories.length > 0 ? clientCategories : [
+                    { id: 'mfg', name: 'Manufacturing' },
+                    { id: 'ret', name: 'Retail' },
+                    { id: 'trd', name: 'Trader' },
+                    { id: 'oem', name: 'OEM' },
+                    { id: 'dis', name: 'Distributor' },
+                    { id: 'end', name: 'End User' },
+                    { id: 'gen', name: 'General' }
+                  ]).map(cat => (
+                    <option key={cat.id} value={cat.name}>{cat.name}</option>
+                  ))}
+                </select>
+              </div>
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-zinc-600">City <span className="text-rose-500">*</span></Label>
                 <Input className="h-9 text-sm" value={formData.city} onChange={e => setFormData({ ...formData, city: e.target.value })} placeholder="e.g. SURAT" required />
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-zinc-600">Mobile Number</Label>
-                <Input
-                  className="h-9 text-sm font-mono"
-                  value={formData.mobile}
-                  onChange={e => {
-                    const val = e.target.value.replace(/\D/g, '').slice(0, 10);
-                    setFormData({ ...formData, mobile: val });
-                  }}
-                  placeholder="9876543210"
-                  maxLength={10}
-                  inputMode="numeric"
-                />
-              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-zinc-600">Mobile Number</Label>
+              <Input
+                className="h-9 text-sm font-mono"
+                value={formData.mobile}
+                onChange={e => {
+                  const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                  setFormData({ ...formData, mobile: val });
+                }}
+                placeholder="9876543210"
+                maxLength={10}
+                inputMode="numeric"
+              />
             </div>
             <p className="text-[10px] text-zinc-400 italic">Default 20% profit margin applied. You can customize per belt type after adding.</p>
             <div className="flex gap-2 pt-1">
@@ -1086,6 +1521,7 @@ export const ClientRegistry: React.FC<ClientRegistryProps> = ({ clients, config,
       <ClientModal
         client={selectedClient}
         config={config}
+        categories={clientCategories}
         onClose={() => setSelectedClient(null)}
         onSaved={() => { onRefresh?.(); setSelectedClient(null); }}
       />

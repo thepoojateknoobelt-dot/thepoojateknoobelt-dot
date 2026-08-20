@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { Config, Company, MaterialStock } from '../types';
+import { Config, Company, MaterialStock, ClientCategory } from '../types';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Button } from './ui/button';
 import { toast } from 'sonner';
-import { UserPlus, Trash2, Upload, Download, Search, Edit2, Save, X, IndianRupee, Percent, ListPlus, Settings2, Lock, Unlock, Plus, Link2, Building2, ChevronDown, ChevronLeft, Info, Clock, Loader2, GitMerge } from 'lucide-react';
+import { UserPlus, Trash2, Upload, Download, Search, Edit2, Save, X, IndianRupee, Percent, ListPlus, Settings2, Lock, Unlock, Plus, Link2, Building2, ChevronDown, ChevronLeft, Info, Clock, Loader2, GitMerge, Tags } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { useAuth } from '../contexts/AuthContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from './ui/dialog';
@@ -25,6 +25,11 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
   const [isLoadingCompanies, setIsLoadingCompanies] = useState(false);
   const [materialStocks, setMaterialStocks] = useState<MaterialStock[]>([]);
 
+  const [clientCategories, setClientCategories] = useState<ClientCategory[]>([]);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [editingCategory, setEditingCategory] = useState<{ id: string; name: string } | null>(null);
+  const [isLoadingCategories, setIsLoadingCategories] = useState(false);
+
   const [selectedBOMIndices, setSelectedBOMIndices] = useState<number[]>([]);
 
   const fetchCompanies = async () => {
@@ -39,6 +44,21 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
       console.error('Failed to fetch companies:', err);
     } finally {
       setIsLoadingCompanies(false);
+    }
+  };
+
+  const fetchClientCategories = async () => {
+    setIsLoadingCategories(true);
+    try {
+      const res = await fetch('/api/client-categories');
+      if (res.ok) {
+        const data = await res.json();
+        setClientCategories(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch client categories:', err);
+    } finally {
+      setIsLoadingCategories(false);
     }
   };
 
@@ -91,6 +111,7 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
 
   React.useEffect(() => {
     fetchCompanies();
+    fetchClientCategories();
     fetchMaterialStocks();
   }, []);
 
@@ -150,6 +171,65 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
       }
     } catch (err) {
       toast.error('Failed to delete company');
+    }
+  };
+
+  const handleAddCategory = async () => {
+    if (!newCategoryName.trim()) return;
+    try {
+      const res = await fetch('/api/client-categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newCategoryName.trim() }),
+      });
+      if (res.ok) {
+        toast.success('Client category added successfully');
+        setNewCategoryName('');
+        fetchClientCategories();
+      } else {
+        const errData = await res.json();
+        toast.error(errData.error || 'Failed to add category');
+      }
+    } catch (err) {
+      toast.error('Failed to add category');
+    }
+  };
+
+  const handleUpdateCategory = async () => {
+    if (!editingCategory || !editingCategory.name.trim()) return;
+    try {
+      const res = await fetch(`/api/client-categories/${editingCategory.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editingCategory.name.trim() }),
+      });
+      if (res.ok) {
+        toast.success('Category updated successfully');
+        setEditingCategory(null);
+        fetchClientCategories();
+      } else {
+        const errData = await res.json();
+        toast.error(errData.error || 'Failed to update category');
+      }
+    } catch (err) {
+      toast.error('Failed to update category');
+    }
+  };
+
+  const handleDeleteCategory = async (id: string, name: string) => {
+    if (!window.confirm(`Are you sure you want to delete category "${name}"?`)) return;
+    try {
+      const res = await fetch(`/api/client-categories/${id}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        toast.success('Category deleted successfully');
+        fetchClientCategories();
+      } else {
+        toast.error('Failed to delete category');
+      }
+    } catch (err) {
+      toast.error('Failed to delete category');
     }
   };
   
@@ -797,12 +877,12 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
               : "border-transparent text-zinc-400 hover:text-zinc-650"
           )}
         >
-          ⚙️ Global Settings & Companies
+          ⚙️ Global Settings, Companies & Categories
         </button>
       </div>
 
       {configTab === 'settings' ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in duration-200">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-200">
           <Card className="border-zinc-200 shadow-sm bg-white">
             <CardHeader className="flex flex-row items-center gap-4 py-4 border-b">
               <div className="p-2 bg-zinc-100 rounded-lg">
@@ -901,6 +981,90 @@ export const AdminConfig: React.FC<AdminConfigProps> = ({ config, onRefresh }) =
                               size="icon"
                               className="h-7 w-7 text-zinc-400 hover:text-rose-500 hover:bg-rose-50"
                               onClick={() => handleDeleteCompany(company.id, company.name)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-zinc-200 shadow-sm bg-white flex flex-col justify-between">
+            <CardHeader className="flex flex-row items-center gap-4 py-4 border-b">
+              <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                <Tags className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle>Client Categories</CardTitle>
+                <CardDescription>Manage business types (e.g. Manufacturing, Retail)</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="p-4 flex-1 flex flex-col space-y-4">
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Input
+                    type="text"
+                    placeholder="Enter category name (e.g. OEM)..."
+                    className="border-zinc-300 bg-white h-9"
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
+                  />
+                </div>
+                <Button onClick={handleAddCategory} size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white h-9 rounded-[6px]">
+                  Add
+                </Button>
+              </div>
+
+              <div className="border border-zinc-200 rounded-lg overflow-hidden flex-1 max-h-[160px] overflow-y-auto divide-y divide-zinc-100 bg-zinc-50/30">
+                {isLoadingCategories ? (
+                  <div className="p-4 text-center text-xs text-zinc-400">Loading categories...</div>
+                ) : clientCategories.length === 0 ? (
+                  <div className="p-4 text-center text-xs text-zinc-400">No categories added yet.</div>
+                ) : (
+                  clientCategories.map((cat) => (
+                    <div key={cat.id} className="flex items-center justify-between p-2.5 px-3 bg-white hover:bg-zinc-50 transition-colors">
+                      {editingCategory && editingCategory.id === cat.id ? (
+                        <div className="flex items-center gap-2 w-full">
+                          <Input
+                            type="text"
+                            className="h-7 text-xs border-zinc-400 bg-white"
+                            value={editingCategory.name}
+                            onChange={(e) => setEditingCategory({ ...editingCategory, name: e.target.value })}
+                            onKeyDown={(e) => e.key === 'Enter' && handleUpdateCategory()}
+                          />
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-emerald-600 hover:bg-emerald-50" onClick={handleUpdateCategory}>
+                            <Save className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-rose-600 hover:bg-rose-50" onClick={() => setEditingCategory(null)}>
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="text-xs font-bold text-zinc-800 flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full bg-indigo-500 inline-block" />
+                            {cat.name}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100"
+                              onClick={() => setEditingCategory({ id: cat.id, name: cat.name })}
+                            >
+                              <Edit2 className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-zinc-400 hover:text-rose-500 hover:bg-rose-50"
+                              onClick={() => handleDeleteCategory(cat.id, cat.name)}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>

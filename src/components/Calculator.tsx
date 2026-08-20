@@ -45,7 +45,10 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
   }, []);
 
   const filteredClients = (Array.isArray(clients) ? clients : []).filter(c =>
+    (c.company || '').toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
     (c.name || '').toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
+    (c.city || '').toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
+    (c.category || '').toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
     (c.mobile || '').toLowerCase().includes(clientSearchQuery.toLowerCase())
   );
 
@@ -827,46 +830,53 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                   <div className="space-y-1">
                     <Label className="text-xs font-medium">Client</Label>
                     <div className="relative" ref={clientDropdownRef}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsClientDropdownOpen(!isClientDropdownOpen);
-                          setClientSearchQuery('');
-                        }}
-                        className="flex w-full items-center justify-between rounded-md border border-zinc-400 bg-white px-3 py-2 text-xs text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 focus:border-zinc-900 h-9 transition-all"
-                      >
-                        <span className={cn(!selectedClient && "text-zinc-500")}>
-                          {selectedClient ? selectedClient.name : "Select Client"}
-                        </span>
-                        <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
-                      </button>
+                      <div className="relative flex items-center">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400 pointer-events-none" />
+                        <input
+                          type="text"
+                          value={isClientDropdownOpen ? clientSearchQuery : (selectedClient ? (selectedClient.company ? `${selectedClient.company}${selectedClient.name ? ` (${selectedClient.name})` : ''}` : selectedClient.name) : '')}
+                          onFocus={() => {
+                            setIsClientDropdownOpen(true);
+                            setClientSearchQuery('');
+                          }}
+                          onChange={(e) => {
+                            setClientSearchQuery(e.target.value);
+                            if (!isClientDropdownOpen) setIsClientDropdownOpen(true);
+                          }}
+                          placeholder="Type company, name, city or mobile to search..."
+                          className="w-full h-9 rounded-md border border-zinc-300 bg-white pl-9 pr-8 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 focus:border-zinc-900 shadow-2xs transition-all placeholder:text-zinc-400 placeholder:font-normal"
+                        />
+                        {selectedClient && !isClientDropdownOpen ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFormData({ ...formData, clientId: '' });
+                              setClientSearchQuery('');
+                              setIsClientDropdownOpen(true);
+                            }}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 p-0.5"
+                            title="Clear client selection"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        ) : (
+                          <ChevronDown 
+                            className={cn(
+                              "absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400 cursor-pointer transition-transform",
+                              isClientDropdownOpen && "rotate-180"
+                            )}
+                            onClick={() => setIsClientDropdownOpen(!isClientDropdownOpen)}
+                          />
+                        )}
+                      </div>
 
                       {isClientDropdownOpen && (
-                        <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-zinc-200 bg-white p-1 shadow-md animate-in fade-in slide-in-from-top-1 duration-100">
-                          <div className="flex items-center border-b border-zinc-150 px-2.5 pb-2 pt-1.5 sticky top-0 bg-white">
-                            <Search className="mr-2 h-3.5 w-3.5 shrink-0 opacity-50 text-zinc-500" />
-                            <input
-                              type="text"
-                              value={clientSearchQuery}
-                              onChange={(e) => setClientSearchQuery(e.target.value)}
-                              placeholder="Search client by name or mobile..."
-                              className="w-full text-xs outline-none bg-transparent placeholder:text-zinc-400 text-zinc-800"
-                              autoFocus
-                            />
-                            {clientSearchQuery && (
-                              <button 
-                                type="button" 
-                                onClick={() => setClientSearchQuery('')}
-                                className="text-zinc-400 hover:text-zinc-600 focus:outline-none"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
-                          <div className="pt-1">
+                        <div className="absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-md border border-zinc-200 bg-white p-1 shadow-lg animate-in fade-in slide-in-from-top-1 duration-100">
+                          <div className="pt-0.5 divide-y divide-zinc-50">
                             {filteredClients.length === 0 ? (
-                              <div className="py-2 text-center text-xs text-zinc-500">
-                                No client found
+                              <div className="py-3 text-center text-xs text-zinc-500 font-medium">
+                                No client found matching "{clientSearchQuery}"
                               </div>
                             ) : (
                               filteredClients.map((c) => {
@@ -875,19 +885,33 @@ export const Calculator: React.FC<CalculatorProps> = ({ config, clients }) => {
                                   <button
                                     key={c.id}
                                     type="button"
-                                    onClick={() => {
+                                    onMouseDown={() => {
                                       setFormData({ ...formData, clientId: c.id });
                                       setQuotationItems([]);
                                       setIsClientDropdownOpen(false);
                                       setClientSearchQuery('');
                                     }}
                                     className={cn(
-                                      "relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none transition-colors text-left hover:bg-zinc-150 hover:text-zinc-900",
-                                      isSelected ? "bg-zinc-100 text-zinc-900 font-medium" : "text-zinc-700"
+                                      "relative flex w-full cursor-pointer select-none items-center rounded-sm px-2.5 py-2 text-xs outline-none transition-colors text-left hover:bg-zinc-100 hover:text-zinc-900",
+                                      isSelected ? "bg-zinc-100/90 text-zinc-900 font-semibold" : "text-zinc-700"
                                     )}
                                   >
-                                    <span className="flex-1 truncate">{c.name}</span>
-                                    {isSelected && <Check className="ml-auto h-3.5 w-3.5 text-zinc-900" />}
+                                    <div className="flex-1 min-w-0 pr-2">
+                                      <div className="font-bold text-zinc-900 text-xs truncate">
+                                        {c.company || c.name}
+                                      </div>
+                                      <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 font-medium truncate mt-0.5">
+                                        {c.name && c.company && <span className="text-zinc-600">{c.name} •</span>}
+                                        <span>{c.city}</span>
+                                        {c.category && (
+                                          <span className="px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 font-bold border border-indigo-100 text-[9px]">
+                                            {c.category}
+                                          </span>
+                                        )}
+                                        {c.mobile && <span className="font-mono text-zinc-400">({c.mobile})</span>}
+                                      </div>
+                                    </div>
+                                    {isSelected && <Check className="ml-auto h-4 w-4 text-emerald-600 shrink-0" />}
                                   </button>
                                 );
                               })
